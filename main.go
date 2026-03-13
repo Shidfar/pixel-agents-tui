@@ -9,11 +9,19 @@ import (
 	"time"
 )
 
+// LabelsEnabled controls whether agent name labels are rendered above characters.
+var LabelsEnabled = true
+
 func main() {
 	projectDir := flag.String("project-dir", "", "Claude Code project directory (default: auto-detect from ~/.claude/projects/)")
 	sessionFile := flag.String("session", "", "Specific JSONL session file to watch")
 	demo := flag.Bool("demo", false, "Run with fake demo agents (no JSONL needed)")
 	fps := flag.Int("fps", 10, "Frames per second (1-30)")
+	layoutFile := flag.String("layout", "", "Path to custom office layout JSON file")
+	themeName := flag.String("theme", "default", "Color theme: default, warm, cool, dark, light")
+	noSound := flag.Bool("no-sound", false, "Disable terminal bell on permission requests")
+	noLabels := flag.Bool("no-labels", false, "Disable agent name labels above characters")
+	noParticles := flag.Bool("no-particles", false, "Disable network activity particle effects")
 	flag.Parse()
 
 	if *fps < 1 {
@@ -21,6 +29,17 @@ func main() {
 	}
 	if *fps > 30 {
 		*fps = 30
+	}
+
+	// Apply flags to globals
+	if *noSound {
+		SoundEnabled = false
+	}
+	if *noLabels {
+		LabelsEnabled = false
+	}
+	if *noParticles {
+		ParticlesEnabled = false
 	}
 
 	// Setup terminal (raw mode + alt screen + hide cursor)
@@ -53,8 +72,23 @@ func main() {
 	}
 	go ReadInput(inputCh, quit)
 
-	// Create office with default layout
-	office := NewOffice(DefaultLayout())
+	// Load layout
+	var layout OfficeLayout
+	if *layoutFile != "" {
+		var err error
+		layout, err = LoadLayout(*layoutFile)
+		if err != nil {
+			RestoreTerminal(oldState)
+			fmt.Fprintf(os.Stderr, "Error loading layout: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		layout = DefaultLayout()
+	}
+
+	// Create office
+	office := NewOffice(layout)
+	office.Theme = FindTheme(*themeName)
 	renderer := NewRenderer(os.Stdout)
 
 	// Game loop

@@ -99,6 +99,16 @@ const maxAgents = 6
 // Files not modified within this window are treated as dead sessions and skipped.
 const recentFileThreshold = 10 * time.Minute
 
+// agentNameFromID returns a short friendly name for a given agent number.
+func agentNameFromID(id int) string {
+	// Short names that render well in the 3x5 pixel font at ~3x downscale
+	names := []string{"Alpha", "Beta", "Gamma", "Delta", "Sigma", "Omega", "Zeta", "Theta", "Kappa", "Lambda"}
+	if id >= 1 && id <= len(names) {
+		return names[id-1]
+	}
+	return "Agent"
+}
+
 // WatchSessions monitors a project directory for JSONL transcript files and
 // starts file watchers for each one. If sessionFile is set, only that single
 // file is watched. Otherwise, the directory is scanned periodically for new
@@ -114,7 +124,7 @@ func WatchSessions(projectDir string, sessionFile string, events chan<- AgentEve
 		// Watch a single specific file
 		agent := NewAgentState(nextAgentID, sessionFile)
 		registry.Set(nextAgentID, agent)
-		events <- AgentEvent{Type: "agentCreated", AgentID: nextAgentID}
+		events <- AgentEvent{Type: "agentCreated", AgentID: nextAgentID, AgentName: agentNameFromID(nextAgentID)}
 		go WatchFile(nextAgentID, sessionFile, registry, events, quit)
 		<-quit
 		return
@@ -157,7 +167,7 @@ func WatchSessions(projectDir string, sessionFile string, events chan<- AgentEve
 			agentCount++
 			agent := NewAgentState(id, f)
 			registry.Set(id, agent)
-			events <- AgentEvent{Type: "agentCreated", AgentID: id}
+			events <- AgentEvent{Type: "agentCreated", AgentID: id, AgentName: agentNameFromID(id)}
 			go WatchFile(id, f, registry, events, quit)
 		}
 	}

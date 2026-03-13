@@ -9,6 +9,7 @@ const (
 	CharWalk
 	CharType
 	CharRead
+	CharGone // offscreen — agent walked out the door
 )
 
 // ── Direction ───────────────────────────────────────────────
@@ -46,6 +47,7 @@ const (
 	TileRug       TileType = 14 // blue/teal carpet accent (walkable)
 	TileCounter   TileType = 15 // kitchen counter (white/light)
 	TileAppliance TileType = 16 // kitchen appliance (silver)
+	TileDoor      TileType = 17 // entrance/exit door (walkable)
 )
 
 // ── Sprite ──────────────────────────────────────────────────
@@ -62,6 +64,7 @@ const (
 	DestBookshelf                 // go to a bookshelf spot (reading)
 	DestBreakRoom                 // go to kitchen or lounge (waiting/idle)
 	DestWander                    // random walkable tile (idle wandering)
+	DestDoor                      // walk to exit door (leaving the office)
 )
 
 // ── TilePos ─────────────────────────────────────────────────
@@ -78,6 +81,7 @@ type Seat struct {
 	Col       int
 	Row       int
 	FacingDir Direction
+	Zone      string // "work", "kitchen", "meeting" — controls assignment priority
 	Assigned  bool
 }
 
@@ -106,7 +110,12 @@ type Character struct {
 	WanderCount     int
 	WanderLimit     int
 	SeatTimer       float64
-	ActiveToolCount int // number of currently active tools (incremented/decremented by events)
+	IdleTimer       float64 // tracks how long the character has been idle (seconds)
+	ActiveToolCount int     // number of currently active tools (incremented/decremented by events)
+
+	// Display
+	Name        string             // display name for this agent
+	ToolHistory []ToolHistoryEntry // recent tool history for panel
 
 	// Activity zone navigation
 	DestType DestType // what kind of destination we're walking to
@@ -142,12 +151,13 @@ func NewAgentState(id int, jsonlFile string) *AgentState {
 // ── AgentEvent ──────────────────────────────────────────────
 
 type AgentEvent struct {
-	Type       string // "agentToolStart", "agentToolDone", "agentWaiting", "agentActive", "agentToolsClear", "agentToolPermission", "agentToolPermissionClear"
+	Type       string // "agentToolStart", "agentToolDone", "agentWaiting", "agentActive", "agentToolsClear", "agentToolPermission", "agentToolPermissionClear", "agentCreated"
 	AgentID    int
 	Status     string
 	ToolID     string
 	ToolName   string
 	ToolStatus string
+	AgentName  string // display name (set on agentCreated events)
 }
 
 // ── OfficeLayout ────────────────────────────────────────────
@@ -208,4 +218,5 @@ const (
 
 	WaitingBubbleDurationSec = 2.0
 	FileWatcherPollMs        = 500
+	ExitIdleTimeoutSec       = 600.0 // 10 minutes idle → agent walks out the door
 )

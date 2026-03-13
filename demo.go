@@ -27,9 +27,10 @@ func demoSleep(d time.Duration, quit <-chan struct{}) bool {
 // RunDemo sends scripted AgentEvents for 4 fake agents, looping forever.
 // Used for visual testing without real JSONL files.
 func RunDemo(events chan<- AgentEvent, quit <-chan struct{}) {
-	// Create all demo agents
+	// Create all demo agents with names
+	demoNames := map[int]string{1: "Coder", 2: "Reader", 3: "Waiting", 4: "Sporadic"}
 	for id := 1; id <= 4; id++ {
-		events <- AgentEvent{Type: "agentCreated", AgentID: id}
+		events <- AgentEvent{Type: "agentCreated", AgentID: id, AgentName: demoNames[id]}
 	}
 
 	if demoSleep(500*time.Millisecond, quit) {

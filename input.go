@@ -62,6 +62,14 @@ func ReadInput(ch chan<- KeyEvent, quit <-chan struct{}) {
 			ch <- KeyEvent{Key: "zoom_in", Rune: rune(buf[0])}
 		case buf[0] == '-':
 			ch <- KeyEvent{Key: "zoom_out", Rune: '-'}
+		case buf[0] == '0':
+			ch <- KeyEvent{Key: "reset_zoom", Rune: '0'}
+		case buf[0] == 't' || buf[0] == 'T':
+			ch <- KeyEvent{Key: "theme", Rune: rune(buf[0])}
+		case buf[0] == 'h' || buf[0] == 'H':
+			ch <- KeyEvent{Key: "history", Rune: rune(buf[0])}
+		case buf[0] == 'n' || buf[0] == 'N':
+			ch <- KeyEvent{Key: "particles", Rune: rune(buf[0])}
 		case n >= 3 && buf[0] == 27 && buf[1] == '[':
 			switch buf[2] {
 			case 'A':

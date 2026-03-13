@@ -399,6 +399,42 @@ var applianceSprite = Sprite{
 	{"#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A", "#6A6A7A"},
 }
 
+// doorSprite - open doorway with dark wood frame and welcome mat
+var doorSprite = Sprite{
+	// Row 0: frame top
+	{"#3E2A1A", "#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A", "#3E2A1A"},
+	// Row 1: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 2: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#7B6A55", "#6B5A45", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#6B5A45", "#7B6A55", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 3: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#7B6A55", "#7B6A55", "#6B5A45", "#7B6A55", "#7B6A55", "#6B5A45", "#7B6A55", "#7B6A55", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 4: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 5: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#6B5A45", "#7B6A55", "#7B6A55", "#6B5A45", "#6B5A45", "#7B6A55", "#7B6A55", "#6B5A45", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 6: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 7: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#7B6A55", "#6B5A45", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#6B5A45", "#7B6A55", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 8: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#7B6A55", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 9: frame + interior
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#7B6A55", "#7B6A55", "#6B5A45", "#7B6A55", "#7B6A55", "#6B5A45", "#7B6A55", "#7B6A55", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 10: frame + interior floor
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 11: frame + mat edge
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#6B5A45", "#8B6B4A", "#8B6B4A", "#8B6B4A", "#8B6B4A", "#8B6B4A", "#8B6B4A", "#6B5A45", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 12: welcome mat
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#8B6B4A", "#A07B5A", "#8B6B4A", "#A07B5A", "#A07B5A", "#8B6B4A", "#A07B5A", "#8B6B4A", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 13: welcome mat center
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#8B6B4A", "#8B6B4A", "#A07B5A", "#A07B5A", "#A07B5A", "#A07B5A", "#8B6B4A", "#8B6B4A", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 14: welcome mat
+	{"#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#8B6B4A", "#A07B5A", "#8B6B4A", "#A07B5A", "#A07B5A", "#8B6B4A", "#A07B5A", "#8B6B4A", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A"},
+	// Row 15: frame bottom
+	{"#3E2A1A", "#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A", "#3E2A1A"},
+}
+
 // ── Furniture + Wall Sprite Map ──────────────────────────────────────
 
 var furnitureSprites = map[TileType]Sprite{
@@ -411,6 +447,7 @@ var furnitureSprites = map[TileType]Sprite{
 	TileRug:       rugSprite,
 	TileCounter:   counterSprite,
 	TileAppliance: applianceSprite,
+	TileDoor:      doorSprite,
 }
 
 // GetTileSprite returns the 16x16 sprite for any tile type.

@@ -52,6 +52,13 @@ func UpdateCharacter(ch *Character, dt float64, office *Office) {
 		}
 	}
 
+	// Track idle time for exit-after-timeout
+	if !ch.IsActive && ch.State != CharGone && ch.State != CharWalk {
+		ch.IdleTimer += dt
+	} else if ch.IsActive {
+		ch.IdleTimer = 0
+	}
+
 	switch ch.State {
 	case CharType, CharRead:
 		updateTyping(ch, dt, office)
@@ -134,6 +141,11 @@ func updateIdle(ch *Character, dt float64, office *Office) {
 
 	// Already at break room — stay put
 	if ch.DestType == DestBreakRoom && ch.Path == nil {
+		// Exit the office after being idle for too long
+		if ch.IdleTimer >= ExitIdleTimeoutSec {
+			startExitWalk(ch, office)
+			return
+		}
 		return
 	}
 
@@ -182,6 +194,15 @@ func updateWalk(ch *Character, dt float64, office *Office) {
 			ch.State = CharRead
 			ch.Frame = 0
 			ch.FrameTimer = 0
+			return
+
+		case DestDoor:
+			// Arrived at the door — agent leaves the office
+			ch.State = CharGone
+			ch.Frame = 0
+			ch.FrameTimer = 0
+			ch.Path = nil
+			office.ReleaseSeat(ch.SeatID)
 			return
 
 		case DestBreakRoom:
@@ -284,6 +305,36 @@ func updateWalk(ch *Character, dt float64, office *Office) {
 				}
 			}
 		}
+	}
+}
+
+// startExitWalk sends the character walking toward the office door to leave.
+func startExitWalk(ch *Character, office *Office) {
+	door := office.DoorPos
+	if door.Col == 0 && door.Row == 0 {
+		// No door configured — just go gone immediately
+		ch.State = CharGone
+		office.ReleaseSeat(ch.SeatID)
+		return
+	}
+
+	blocked := office.GetBlockedTiles()
+	path := FindPath(
+		TilePos{Col: ch.TileCol, Row: ch.TileRow},
+		door,
+		office.TileMap, blocked,
+	)
+	if len(path) > 0 {
+		ch.Path = path
+		ch.MoveProgress = 0
+		ch.State = CharWalk
+		ch.DestType = DestDoor
+		ch.Frame = 0
+		ch.FrameTimer = 0
+	} else {
+		// Can't path to door — go gone immediately
+		ch.State = CharGone
+		office.ReleaseSeat(ch.SeatID)
 	}
 }
 

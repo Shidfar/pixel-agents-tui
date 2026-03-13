@@ -19,6 +19,14 @@ type Office struct {
 	BookshelfSpots []TilePos // walkable tiles adjacent to bookshelves
 	KitchenSpots   []TilePos // walkable kitchen floor tiles (TileFloor3/TileFloor4)
 	LoungeSpots    []TilePos // walkable rug tiles (TileRug)
+	DoorPos        TilePos   // position of the exit door tile
+
+	// Feature state
+	Theme            *Theme          // current color theme
+	Zoom             ZoomState       // zoom/pan state
+	HistoryPanelOpen bool            // whether the history sidebar is shown
+	AgentNames       map[int]string  // names from agentCreated events (before character exists)
+	Particles        *ParticleSystem // network activity visualization
 }
 
 // NewOffice creates a new Office from the given layout.
@@ -36,6 +44,10 @@ func NewOffice(layout OfficeLayout) *Office {
 		Cols:        layout.Cols,
 		Rows:        layout.Rows,
 		NextSeatIdx: 0,
+		Theme:       &ThemeDefault,
+		Zoom:        NewZoomState(),
+		AgentNames:  make(map[int]string),
+		Particles:   NewParticleSystem(),
 	}
 	o.computeZones()
 	return o
@@ -79,11 +91,25 @@ func (o *Office) computeZones() {
 			}
 		}
 	}
+
+	// Find door tile
+	for row := 0; row < o.Rows; row++ {
+		for col := 0; col < o.Cols; col++ {
+			if o.TileMap[row][col] == TileDoor {
+				o.DoorPos = TilePos{Col: col, Row: row}
+			}
+		}
+	}
 }
 
 // HandleEvent processes an AgentEvent: creates characters for new agents,
 // and delegates to HandleAgentEvent for state transitions.
 func (o *Office) HandleEvent(ev AgentEvent) {
+	// Store agent name from agentCreated events
+	if ev.Type == "agentCreated" && ev.AgentName != "" {
+		o.AgentNames[ev.AgentID] = ev.AgentName
+	}
+
 	// Ensure character exists for this agent
 	ch, exists := o.Characters[ev.AgentID]
 	if !exists {
@@ -94,37 +120,105 @@ func (o *Office) HandleEvent(ev AgentEvent) {
 			return
 		}
 		ch = NewCharacter(ev.AgentID, seat.UID, seat)
+		// Apply stored name if available
+		if name, ok := o.AgentNames[ev.AgentID]; ok {
+			ch.Name = name
+		}
 		o.Characters[ev.AgentID] = ch
 	}
 
 	HandleAgentEvent(ch, ev, o)
 }
 
-// Update advances all characters by dt seconds.
-func (o *Office) Update(dt float64) {
-	for _, ch := range o.Characters {
-		UpdateCharacter(ch, dt, o)
+// ReleaseSeat marks the given seat as unassigned so it can be reused.
+func (o *Office) ReleaseSeat(seatID string) {
+	if seat, ok := o.Seats[seatID]; ok {
+		seat.Assigned = false
 	}
 }
 
-// HandleInput is a placeholder for future keyboard/mouse input handling.
-func (o *Office) HandleInput(key KeyEvent) {
-	// Placeholder — will be implemented by TUI renderer
+// Update advances all characters by dt seconds.
+func (o *Office) Update(dt float64) {
+	for _, ch := range o.Characters {
+		if ch.State == CharGone {
+			continue
+		}
+		UpdateCharacter(ch, dt, o)
+	}
+
+	// Update particle system
+	if ParticlesEnabled {
+		o.Particles.Update(dt)
+	}
+
+	// Auto-follow most active agent when zoomed in
+	if o.Zoom.Level > 1 && o.Zoom.AutoFollow {
+		if agent := MostActiveAgent(o.Characters); agent != nil {
+			pxW := float64(o.Cols * TileSize)
+			pxH := float64(o.Rows * TileSize)
+			viewW := pxW / float64(o.Zoom.Level)
+			viewH := pxH / float64(o.Zoom.Level)
+			o.Zoom.CenterOn(agent.X, agent.Y, viewW, viewH)
+			o.Zoom.ClampPan(pxW, pxH, viewW, viewH)
+		}
+	}
 }
 
-// AssignSeat assigns the next available seat to an agent using round-robin.
-// Returns the assigned seat, or nil if no seats are available.
+// HandleInput processes keyboard input for zoom, theme, and history panel.
+func (o *Office) HandleInput(key KeyEvent) {
+	switch key.Key {
+	case "zoom_in":
+		o.Zoom.ZoomIn()
+	case "zoom_out":
+		o.Zoom.ZoomOut()
+	case "reset_zoom":
+		o.Zoom.Reset()
+	case "up":
+		o.Zoom.Pan(0, -PanTileSize)
+	case "down":
+		o.Zoom.Pan(0, PanTileSize)
+	case "left":
+		o.Zoom.Pan(-PanTileSize, 0)
+	case "right":
+		o.Zoom.Pan(PanTileSize, 0)
+	case "theme":
+		o.Theme = NextTheme(o.Theme)
+	case "history":
+		o.HistoryPanelOpen = !o.HistoryPanelOpen
+	case "particles":
+		ParticlesEnabled = !ParticlesEnabled
+	}
+}
+
+// seatZonePriority defines the assignment order: work desks first, then
+// meeting room, then kitchen. Zones not listed get lowest priority.
+var seatZonePriority = map[string]int{
+	"work":    0,
+	"meeting": 1,
+	"kitchen": 2,
+}
+
+// AssignSeat assigns the next available seat to an agent, preferring work-area
+// seats over meeting and kitchen seats. Within each zone seats are sorted by
+// UID for stable round-robin ordering.
 func (o *Office) AssignSeat(agentID int) *Seat {
 	if len(o.Seats) == 0 {
 		return nil
 	}
 
-	// Collect seat UIDs in a stable sorted order
+	// Collect seat UIDs sorted by zone priority, then UID within each zone.
 	uids := make([]string, 0, len(o.Seats))
 	for uid := range o.Seats {
 		uids = append(uids, uid)
 	}
-	sort.Strings(uids)
+	sort.Slice(uids, func(i, j int) bool {
+		zi := seatZonePriority[o.Seats[uids[i]].Zone]
+		zj := seatZonePriority[o.Seats[uids[j]].Zone]
+		if zi != zj {
+			return zi < zj
+		}
+		return uids[i] < uids[j]
+	})
 
 	// Try from NextSeatIdx onwards (round-robin)
 	for i := 0; i < len(uids); i++ {

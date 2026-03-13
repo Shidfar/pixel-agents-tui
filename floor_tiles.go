@@ -38,6 +38,7 @@ var FloorColors = map[TileType]string{
 	TileRug:       "#2A4A6B", // blue carpet/rug
 	TileCounter:   "#C8C0B0", // light kitchen counter
 	TileAppliance: "#7A7A8A", // silver appliance
+	TileDoor:      "#4A3A2E", // dark wood door
 }
 
 // GetTileColor returns the hex color string for a tile type.
