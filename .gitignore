@@ -1,0 +1,24 @@
+# Compiled binaries
+pixel-agents-tui
+pixel-agents
+
+# Test binaries
+*.test
+
+# Go build cache
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

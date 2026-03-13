@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","session_id":"test-001","cwd":"/tmp/test"}
+{"type":"user","message":{"role":"user","content":"Fix the bug in main.ts"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{"file_path":"src/main.ts"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"const x = 1;"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_2","name":"Edit","input":{"file_path":"src/main.ts","old_string":"const x = 1;","new_string":"const x = 2;"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_2","content":"edited"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I've fixed the bug by changing the value from 1 to 2."}]}}
+{"type":"system","subtype":"turn_duration","duration_ms":3200}
