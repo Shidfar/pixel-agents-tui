@@ -13,13 +13,13 @@ package main
 
 // ── Palette keys ──────────────────────────────────────────────
 const (
-	tH = "hair"  // hair color
-	tK = "skin"  // skin color
-	tS = "shirt" // shirt color
-	tP = "pants" // pants color
-	tO = "shoes" // shoe color
+	tH = "hair"    // hair color
+	tK = "skin"    // skin color
+	tS = "shirt"   // shirt color
+	tP = "pants"   // pants color
+	tO = "shoes"   // shoe color
 	tE = "#FFFFFF" // eyes (white)
-	t_ = ""      // transparent
+	t_ = ""        // transparent
 )
 
 // charPalette holds the 5 color slots for a character.

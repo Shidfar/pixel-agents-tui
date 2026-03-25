@@ -39,15 +39,19 @@ const (
 	TileVoid   TileType = 8
 
 	// Furniture tiles
-	TileDesk      TileType = 9  // brown desk surface
-	TileComputer  TileType = 10 // dark gray (monitor)
-	TileBookshelf TileType = 11 // dark brown with books
-	TilePlant     TileType = 12 // green plant
-	TileChair     TileType = 13 // lighter wood chair (walkable)
-	TileRug       TileType = 14 // blue/teal carpet accent (walkable)
-	TileCounter   TileType = 15 // kitchen counter (white/light)
-	TileAppliance TileType = 16 // kitchen appliance (silver)
-	TileDoor      TileType = 17 // entrance/exit door (walkable)
+	TileDesk        TileType = 9  // brown desk surface
+	TileComputer    TileType = 10 // dark gray (monitor)
+	TileBookshelf   TileType = 11 // dark brown with books
+	TilePlant       TileType = 12 // green plant
+	TileChair       TileType = 13 // lighter wood chair (walkable)
+	TileRug         TileType = 14 // blue/teal carpet accent (walkable)
+	TileCounter     TileType = 15 // kitchen counter (white/light)
+	TileAppliance   TileType = 16 // kitchen appliance (silver)
+	TileDoor        TileType = 17 // entrance/exit door (walkable)
+	TileCouch       TileType = 18 // couch/sofa (walkable, agents sit here)
+	TileTV          TileType = 19 // wall-mounted TV screen (not walkable)
+	TileCoffeeTable TileType = 20 // low coffee table (not walkable)
+	TileGameConsole TileType = 21 // PS4 game console (not walkable)
 )
 
 // ── Sprite ──────────────────────────────────────────────────
@@ -65,6 +69,7 @@ const (
 	DestBreakRoom                 // go to kitchen or lounge (waiting/idle)
 	DestWander                    // random walkable tile (idle wandering)
 	DestDoor                      // walk to exit door (leaving the office)
+	DestPlayroom                  // go to playroom (gaming/relaxing while idle)
 )
 
 // ── TilePos ─────────────────────────────────────────────────
@@ -120,6 +125,12 @@ type Character struct {
 	// Activity zone navigation
 	DestType DestType // what kind of destination we're walking to
 	DestPos  TilePos  // target tile position for zone navigation
+
+	// Message bubble (inter-agent communication)
+	MessageBubble string  // e.g. "→ Alpha" — shown as speech bubble
+	MessageTimer  float64 // countdown timer for message bubble display
+	MessageTarget int     // ID of the target character (for particle beam)
+	ParentID      int     // ID of parent agent (for spawned sub-agents)
 }
 
 // ── AgentState ──────────────────────────────────────────────
@@ -151,13 +162,15 @@ func NewAgentState(id int, jsonlFile string) *AgentState {
 // ── AgentEvent ──────────────────────────────────────────────
 
 type AgentEvent struct {
-	Type       string // "agentToolStart", "agentToolDone", "agentWaiting", "agentActive", "agentToolsClear", "agentToolPermission", "agentToolPermissionClear", "agentCreated"
-	AgentID    int
-	Status     string
-	ToolID     string
-	ToolName   string
-	ToolStatus string
-	AgentName  string // display name (set on agentCreated events)
+	Type        string // "agentToolStart", "agentToolDone", "agentWaiting", "agentActive", "agentToolsClear", "agentToolPermission", "agentToolPermissionClear", "agentCreated"
+	AgentID     int
+	Status      string
+	ToolID      string
+	ToolName    string
+	ToolStatus  string
+	AgentName   string // display name (set on agentCreated events)
+	MessageTo   string // recipient name for agentMessage events
+	MessageText string // message content for agentMessage events
 }
 
 // ── OfficeLayout ────────────────────────────────────────────
@@ -193,21 +206,23 @@ var ReadingTools = map[string]bool{
 var PermissionExemptTools = map[string]bool{
 	"Task":            true,
 	"AskUserQuestion": true,
+	"SendMessage":     true,
+	"Agent":           true,
 }
 
 // ── Timing constants ────────────────────────────────────────
 
 const (
-	ToolDoneDelayMs      = 300
-	TextIdleDelayMs      = 5000
-	PermissionTimerMs    = 7000
-	BashCmdDisplayMaxLen = 30
+	ToolDoneDelayMs       = 300
+	TextIdleDelayMs       = 5000
+	PermissionTimerMs     = 7000
+	BashCmdDisplayMaxLen  = 30
 	TaskDescDisplayMaxLen = 40
-	TileSize             = 16
-	WalkSpeedPxPerSec    = 48.0
-	WalkFrameDurationSec = 0.15
-	TypeFrameDurationSec = 0.3
-	ReadFrameDurationSec = 0.3
+	TileSize              = 16
+	WalkSpeedPxPerSec     = 48.0
+	WalkFrameDurationSec  = 0.15
+	TypeFrameDurationSec  = 0.3
+	ReadFrameDurationSec  = 0.3
 
 	WanderPauseMinSec        = 2.0
 	WanderPauseMaxSec        = 20.0

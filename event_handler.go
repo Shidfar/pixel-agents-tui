@@ -101,6 +101,35 @@ func HandleAgentEvent(ch *Character, ev AgentEvent, office *Office) {
 		if ParticlesEnabled {
 			office.Particles.RemoveBeamsForAgent(ch.ID)
 		}
+
+	case "agentMessage":
+		// Show message bubble with just the recipient indicator
+		ch.MessageBubble = "\u2192 " + ev.MessageTo // "→ {name}"
+		ch.MessageTimer = 4.0
+
+		// Find target character by name and create particle beam
+		if ParticlesEnabled {
+			for _, other := range office.Characters {
+				if other.Name == ev.MessageTo && other.ID != ch.ID {
+					ch.MessageTarget = other.ID
+					office.Particles.AddBeam(
+						ch.X, ch.Y-8,
+						other.X, other.Y-8,
+						ParticleColorAgent, ch.ID, ev.ToolID,
+					)
+					// Burst at both ends
+					office.Particles.EmitBurst(ch.X, ch.Y-8, ParticleColorAgent, 6)
+					office.Particles.EmitBurst(other.X, other.Y-8, ParticleColorAgent, 6)
+					break
+				}
+			}
+		}
+
+	case "agentSpawned":
+		// Visual burst when an agent spawns a sub-agent
+		if ParticlesEnabled {
+			office.Particles.EmitBurst(ch.X, ch.Y-8, ParticleColorAgent, 12)
+		}
 	}
 }
 

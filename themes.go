@@ -3,9 +3,9 @@ package main
 // Theme defines a color palette for the office environment.
 type Theme struct {
 	Name       string
-	Background [3]uint8                                    // framebuffer clear color
-	StatusFg   [3]uint8                                    // status bar foreground
-	StatusBg   [3]uint8                                    // status bar background
+	Background [3]uint8                                  // framebuffer clear color
+	StatusFg   [3]uint8                                  // status bar foreground
+	StatusBg   [3]uint8                                  // status bar background
 	Transform  func(r, g, b uint8) (uint8, uint8, uint8) // color transform for all pixels
 }
 

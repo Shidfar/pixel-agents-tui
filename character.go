@@ -52,6 +52,20 @@ func UpdateCharacter(ch *Character, dt float64, office *Office) {
 		}
 	}
 
+	// Tick message bubble timer (counts down to 0, then auto-clears)
+	if ch.MessageBubble != "" {
+		ch.MessageTimer -= dt
+		if ch.MessageTimer <= 0 {
+			ch.MessageBubble = ""
+			ch.MessageTimer = 0
+			ch.MessageTarget = 0
+			// Clean up message beam
+			if ParticlesEnabled {
+				office.Particles.RemoveBeamsForAgent(ch.ID)
+			}
+		}
+	}
+
 	// Track idle time for exit-after-timeout
 	if !ch.IsActive && ch.State != CharGone && ch.State != CharWalk {
 		ch.IdleTimer += dt
@@ -139,8 +153,8 @@ func updateIdle(ch *Character, dt float64, office *Office) {
 		return
 	}
 
-	// Already at break room — stay put
-	if ch.DestType == DestBreakRoom && ch.Path == nil {
+	// Already at break room or playroom — stay put
+	if (ch.DestType == DestBreakRoom || ch.DestType == DestPlayroom) && ch.Path == nil {
 		// Exit the office after being idle for too long
 		if ch.IdleTimer >= ExitIdleTimeoutSec {
 			startExitWalk(ch, office)
@@ -149,12 +163,19 @@ func updateIdle(ch *Character, dt float64, office *Office) {
 		return
 	}
 
-	// Countdown before heading to break room
+	// Countdown before heading to break room or playroom
 	ch.WanderTimer -= dt
 	if ch.WanderTimer <= 0 {
 		blocked := office.GetBlockedTiles()
-		spot := office.RandomBreakSpot(blocked)
-		ch.DestType = DestBreakRoom
+		// 40% chance to go to playroom instead of break room
+		var spot TilePos
+		if len(office.PlayroomSpots) > 0 && randomRange(0, 1) < 0.4 {
+			spot = office.RandomPlayroomSpot(blocked)
+			ch.DestType = DestPlayroom
+		} else {
+			spot = office.RandomBreakSpot(blocked)
+			ch.DestType = DestBreakRoom
+		}
 		path := FindPath(
 			TilePos{Col: ch.TileCol, Row: ch.TileRow},
 			spot,
@@ -203,6 +224,15 @@ func updateWalk(ch *Character, dt float64, office *Office) {
 			ch.FrameTimer = 0
 			ch.Path = nil
 			office.ReleaseSeat(ch.SeatID)
+			return
+
+		case DestPlayroom:
+			// Arrived at playroom — stay idle here facing TV
+			ch.State = CharIdle
+			ch.Dir = DirUp // face the TV (north wall)
+			ch.Frame = 0
+			ch.FrameTimer = 0
+			ch.Path = nil
 			return
 
 		case DestBreakRoom:

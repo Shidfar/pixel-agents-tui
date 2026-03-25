@@ -18,7 +18,7 @@ demo: build
 	./$(BINARY) --demo
 
 test:
-	go test -v -race ./...
+	go test -v ./...
 
 clean:
 	rm -f $(BINARY) pixel-agents

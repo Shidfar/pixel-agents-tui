@@ -435,19 +435,116 @@ var doorSprite = Sprite{
 	{"#3E2A1A", "#3E2A1A", "#3E2A1A", "#5A3A20", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#6B5A45", "#5A3A20", "#3E2A1A", "#3E2A1A", "#3E2A1A"},
 }
 
+// couchSprite — Dark navy blue couch seen from above, with cushions and armrests
+var couchSprite = Sprite{
+	// Row 0-2: back rest (dark frame)
+	{"#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	// Row 3-12: cushion sections with armrests
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#4A4A8A", "#3A3A6A", "#4A4A8A", "#2A2A4A", "#2A2A4A", "#4A4A8A", "#3A3A6A", "#4A4A8A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#5A5A9A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#5A5A9A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#4A4A8A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#4A4A8A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#4A4A8A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#4A4A8A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#5A5A9A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#5A5A9A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#4A4A8A", "#3A3A6A", "#4A4A8A", "#2A2A4A", "#2A2A4A", "#4A4A8A", "#3A3A6A", "#4A4A8A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#4A4A8A", "#3A3A6A", "#2A2A4A", "#2A2A4A"},
+	// Row 13-15: front edge (dark frame)
+	{"#2A2A4A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#3A3A6A", "#2A2A4A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A"},
+	{"#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A", "#2A2A4A"},
+}
+
+// tvSprite — Flat screen TV mounted on wall, showing colorful game screen
+var tvSprite = Sprite{
+	// Row 0-1: top bezel
+	{"#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A"},
+	// Row 2-11: screen with game pixels
+	{"#1A1A1A", "#1A1A1A", "#4444FF", "#44FFFF", "#44FF44", "#4444FF", "#FFFF44", "#FF4444", "#44FF44", "#44FFFF", "#FF4444", "#FFFF44", "#4444FF", "#44FF44", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#FF4444", "#4444FF", "#FFFF44", "#44FF44", "#44FFFF", "#4444FF", "#FF4444", "#FFFF44", "#44FF44", "#4444FF", "#44FFFF", "#FF4444", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#44FF44", "#FFFF44", "#FF4444", "#44FFFF", "#4444FF", "#44FF44", "#FFFF44", "#FF4444", "#44FFFF", "#44FF44", "#FF4444", "#4444FF", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#44FFFF", "#FF4444", "#4444FF", "#FFFF44", "#44FF44", "#44FFFF", "#4444FF", "#44FF44", "#FFFF44", "#FF4444", "#44FF44", "#FFFF44", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#FFFF44", "#44FF44", "#44FFFF", "#FF4444", "#FF4444", "#FFFF44", "#44FF44", "#4444FF", "#FF4444", "#44FFFF", "#FFFF44", "#44FF44", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#4444FF", "#44FFFF", "#FF4444", "#44FF44", "#FFFF44", "#4444FF", "#44FFFF", "#FF4444", "#44FF44", "#FFFF44", "#4444FF", "#44FFFF", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#FF4444", "#FFFF44", "#44FF44", "#4444FF", "#44FFFF", "#FF4444", "#FFFF44", "#44FF44", "#4444FF", "#44FFFF", "#FF4444", "#4444FF", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#44FF44", "#4444FF", "#FFFF44", "#44FFFF", "#FF4444", "#44FF44", "#4444FF", "#FFFF44", "#FF4444", "#4444FF", "#44FF44", "#FF4444", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#FFFF44", "#FF4444", "#4444FF", "#44FF44", "#44FF44", "#FFFF44", "#FF4444", "#44FFFF", "#44FF44", "#FF4444", "#FFFF44", "#44FFFF", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#44FFFF", "#44FF44", "#FF4444", "#FFFF44", "#4444FF", "#44FFFF", "#44FF44", "#4444FF", "#FFFF44", "#44FF44", "#4444FF", "#FFFF44", "#1A1A1A", "#1A1A1A"},
+	// Row 12-13: bottom bezel
+	{"#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A"},
+	{"#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A"},
+	// Row 14-15: stand/mount
+	{"", "", "", "", "", "", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "", "", "", "", "", ""},
+	{"", "", "", "", "", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "", "", "", "", ""},
+}
+
+// coffeeTableSprite — Low wooden coffee table seen from above
+var coffeeTableSprite = Sprite{
+	// Row 0-1: top edge
+	{"#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A"},
+	{"#5C3D0A", "#5C3D0A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#5C3D0A", "#5C3D0A"},
+	// Row 2-13: wood surface with grain
+	{"#5C3D0A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#5C3D0A"},
+	{"#5C3D0A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#A07B4A", "#5C3D0A"},
+	// Row 14-15: bottom edge with leg corners
+	{"#5C3D0A", "#5C3D0A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#8B6B3A", "#5C3D0A", "#5C3D0A"},
+	{"#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A", "#5C3D0A"},
+}
+
+// gameConsoleSprite — PS4-style game console with a blue LED glow
+var gameConsoleSprite = Sprite{
+	// Row 0-5: shelf/surface area
+	{"#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E"},
+	{"#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E"},
+	{"#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E"},
+	{"#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E"},
+	{"#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E"},
+	{"#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E", "#2A2A3E"},
+	// Row 6-7: console top — sleek angled shape
+	{"", "", "", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "", "", ""},
+	{"", "", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "", ""},
+	// Row 8: LED strip — blue glow
+	{"", "#1A1A2E", "#1A1A2E", "#0044FF", "#0066FF", "#0044FF", "#0066FF", "#0044FF", "#0066FF", "#0044FF", "#0066FF", "#0044FF", "#0066FF", "#1A1A2E", "#1A1A2E", ""},
+	// Row 9-12: console body
+	{"", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", ""},
+	{"", "#1A1A2E", "#1A1A2E", "#2A2A3E", "#1A1A2E", "#1A1A2E", "#2A2A3E", "#1A1A2E", "#1A1A2E", "#2A2A3E", "#1A1A2E", "#1A1A2E", "#2A2A3E", "#1A1A2E", "#1A1A2E", ""},
+	{"", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", ""},
+	{"", "", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "#1A1A2E", "", ""},
+	// Row 13-15: controller at side
+	{"", "", "", "", "", "", "", "", "", "", "", "", "#1A1A2E", "#1A1A2E", "#1A1A2E", ""},
+	{"", "", "", "", "", "", "", "", "", "", "", "#1A1A2E", "#2A2A3E", "#1A1A2E", "#1A1A2E", ""},
+	{"", "", "", "", "", "", "", "", "", "", "", "", "#1A1A2E", "#1A1A2E", "", ""},
+}
+
 // ── Furniture + Wall Sprite Map ──────────────────────────────────────
 
 var furnitureSprites = map[TileType]Sprite{
-	TileWall:      wallSprite,
-	TileDesk:      deskSprite,
-	TileComputer:  computerSprite,
-	TileBookshelf: bookshelfSprite,
-	TilePlant:     plantSprite,
-	TileChair:     chairSprite,
-	TileRug:       rugSprite,
-	TileCounter:   counterSprite,
-	TileAppliance: applianceSprite,
-	TileDoor:      doorSprite,
+	TileWall:        wallSprite,
+	TileDesk:        deskSprite,
+	TileComputer:    computerSprite,
+	TileBookshelf:   bookshelfSprite,
+	TilePlant:       plantSprite,
+	TileChair:       chairSprite,
+	TileRug:         rugSprite,
+	TileCounter:     counterSprite,
+	TileAppliance:   applianceSprite,
+	TileDoor:        doorSprite,
+	TileCouch:       couchSprite,
+	TileTV:          tvSprite,
+	TileCoffeeTable: coffeeTableSprite,
+	TileGameConsole: gameConsoleSprite,
 }
 
 // GetTileSprite returns the 16x16 sprite for any tile type.

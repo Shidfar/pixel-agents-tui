@@ -19,6 +19,7 @@ type Office struct {
 	BookshelfSpots []TilePos // walkable tiles adjacent to bookshelves
 	KitchenSpots   []TilePos // walkable kitchen floor tiles (TileFloor3/TileFloor4)
 	LoungeSpots    []TilePos // walkable rug tiles (TileRug)
+	PlayroomSpots  []TilePos // rug tiles adjacent to couches
 	DoorPos        TilePos   // position of the exit door tile
 
 	// Feature state
@@ -97,6 +98,25 @@ func (o *Office) computeZones() {
 		for col := 0; col < o.Cols; col++ {
 			if o.TileMap[row][col] == TileDoor {
 				o.DoorPos = TilePos{Col: col, Row: row}
+			}
+		}
+	}
+
+	// PlayroomSpots: rug tiles adjacent to couches
+	couchSet := make(map[TilePos]bool)
+	for row := 0; row < o.Rows; row++ {
+		for col := 0; col < o.Cols; col++ {
+			if o.TileMap[row][col] == TileCouch {
+				couchSet[TilePos{Col: col, Row: row}] = true
+				// Mark adjacent rug tiles as playroom spots
+				for _, d := range [][2]int{{0, -1}, {0, 1}, {-1, 0}, {1, 0}} {
+					nc, nr := col+d[0], row+d[1]
+					if nr >= 0 && nr < o.Rows && nc >= 0 && nc < o.Cols {
+						if o.TileMap[nr][nc] == TileRug {
+							o.PlayroomSpots = append(o.PlayroomSpots, TilePos{Col: nc, Row: nr})
+						}
+					}
+				}
 			}
 		}
 	}
@@ -193,9 +213,10 @@ func (o *Office) HandleInput(key KeyEvent) {
 // seatZonePriority defines the assignment order: work desks first, then
 // meeting room, then kitchen. Zones not listed get lowest priority.
 var seatZonePriority = map[string]int{
-	"work":    0,
-	"meeting": 1,
-	"kitchen": 2,
+	"work":     0,
+	"meeting":  1,
+	"kitchen":  2,
+	"playroom": 3,
 }
 
 // AssignSeat assigns the next available seat to an agent, preferring work-area
@@ -251,6 +272,14 @@ func (o *Office) GetBlockedTiles() map[TilePos]bool {
 // in the given set. Falls back to the character's seat position if none available.
 func (o *Office) RandomBookshelfSpot(exclude map[TilePos]bool) TilePos {
 	if spot, ok := randomFromSlice(o.BookshelfSpots, exclude); ok {
+		return spot
+	}
+	return o.randomWalkableTile(exclude)
+}
+
+// RandomPlayroomSpot returns a random playroom spot (near couches/TV).
+func (o *Office) RandomPlayroomSpot(exclude map[TilePos]bool) TilePos {
+	if spot, ok := randomFromSlice(o.PlayroomSpots, exclude); ok {
 		return spot
 	}
 	return o.randomWalkableTile(exclude)

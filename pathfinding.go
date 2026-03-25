@@ -7,7 +7,7 @@ func IsWalkable(t TileType) bool {
 		return true
 	}
 	// Chairs and rugs are walkable furniture
-	return t == TileChair || t == TileRug || t == TileDoor
+	return t == TileChair || t == TileRug || t == TileDoor || t == TileCouch
 }
 
 // isWalkableAt checks if a specific tile position is walkable on the map.

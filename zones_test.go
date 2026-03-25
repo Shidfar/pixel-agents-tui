@@ -230,14 +230,14 @@ func TestIdleAlwaysGoesToBreakRoom(t *testing.T) {
 
 		UpdateCharacter(ch, 0.01, office)
 
-		if ch.State == CharWalk && ch.DestType == DestBreakRoom {
+		if ch.State == CharWalk && (ch.DestType == DestBreakRoom || ch.DestType == DestPlayroom) {
 			breakRoomCount++
 		}
 	}
 
-	t.Logf("Idle destination: %d/%d went to break room", breakRoomCount, trials)
+	t.Logf("Idle destination: %d/%d went to break/playroom", breakRoomCount, trials)
 	if breakRoomCount < trials {
-		t.Errorf("expected all idle characters to head to break room, got %d/%d", breakRoomCount, trials)
+		t.Errorf("expected all idle characters to head to break room or playroom, got %d/%d", breakRoomCount, trials)
 	}
 }
 

@@ -75,6 +75,18 @@ func FormatToolStatus(toolName string, input map[string]interface{}) string {
 		return "Running subtask"
 	case "AskUserQuestion":
 		return "Waiting for your answer"
+	case "SendMessage":
+		to, _ := input["to"].(string)
+		if to != "" {
+			return "Messaging " + to
+		}
+		return "Sending message"
+	case "Agent":
+		name, _ := input["name"].(string)
+		if name != "" {
+			return "Spawning " + name
+		}
+		return "Spawning agent"
 	case "EnterPlanMode":
 		return "Planning"
 	case "NotebookEdit":
@@ -167,6 +179,34 @@ func processAssistant(agentID int, agent *AgentState, record *JsonlRecord, emit 
 					ToolName:   toolName,
 					ToolStatus: status,
 				})
+
+				// Emit special events for inter-agent communication tools
+				if toolName == "SendMessage" {
+					msgTo, _ := block.Input["to"].(string)
+					msgText, _ := block.Input["message"].(string)
+					if msgTo != "" {
+						emit(AgentEvent{
+							Type:        "agentMessage",
+							AgentID:     agentID,
+							ToolName:    "SendMessage",
+							ToolID:      block.ID,
+							MessageTo:   msgTo,
+							MessageText: msgText,
+						})
+					}
+				}
+				if toolName == "Agent" {
+					spawnName, _ := block.Input["name"].(string)
+					spawnDesc, _ := block.Input["description"].(string)
+					if spawnName == "" {
+						spawnName = spawnDesc
+					}
+					emit(AgentEvent{
+						Type:      "agentSpawned",
+						AgentID:   agentID,
+						AgentName: spawnName,
+					})
+				}
 			}
 		}
 

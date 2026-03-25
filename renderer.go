@@ -307,6 +307,11 @@ func (r *Renderer) Render(o *Office) {
 			labelRow = termRow - 1
 		}
 
+		// Adjust label row further if message bubble is also present
+		if ch.MessageBubble != "" {
+			labelRow--
+		}
+
 		// Draw bubble indicator above character
 		if ch.BubbleType != "" {
 			bubbleRow := termRow - 1
@@ -343,6 +348,42 @@ func (r *Renderer) Render(o *Office) {
 						}
 					}
 					placed = append(placed, placedRect{row: bubbleRow, startCol: startCol, endCol: endCol})
+				}
+			}
+		}
+
+		// Draw message bubble (inter-agent communication)
+		if ch.MessageBubble != "" {
+			msgRow := termRow - 1
+			// If there's already a standard bubble, shift message bubble above it
+			if ch.BubbleType != "" {
+				msgRow = termRow - 2
+			}
+			if msgRow >= 0 {
+				msgText := " " + ch.MessageBubble + " "
+				msgFg := [3]uint8{255, 255, 255}
+				msgBg := [3]uint8{102, 51, 153} // #663399 purple
+				startCol := termCol - len(msgText)/2
+				endCol := startCol + len(msgText)
+
+				// Collision avoidance: shift up by 1 row, max 2 shifts
+				for shift := 0; shift < 3; shift++ {
+					if !overlaps(placed, msgRow-shift, startCol, endCol) {
+						msgRow -= shift
+						// Also shift label up
+						labelRow -= shift
+						break
+					}
+				}
+
+				if msgRow >= 0 {
+					for i, ru := range msgText {
+						col := startCol + i
+						if col >= 0 && col < officeAreaW {
+							r.fb.Set(msgRow, col, Cell{Char: string(ru), Fg: msgFg, Bg: msgBg})
+						}
+					}
+					placed = append(placed, placedRect{row: msgRow, startCol: startCol, endCol: endCol})
 				}
 			}
 		}

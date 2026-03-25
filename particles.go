@@ -334,7 +334,7 @@ func ToolParticleColor(toolName string) string {
 		return ParticleColorWeb
 	case "Bash":
 		return ParticleColorBash
-	case "Task":
+	case "Task", "SendMessage", "Agent":
 		return ParticleColorAgent
 	case "Edit", "Write":
 		return ParticleColorWrite
@@ -352,7 +352,7 @@ func ToolCategory(toolName string) string {
 		return "web"
 	case "Bash":
 		return "bash"
-	case "Task":
+	case "Task", "SendMessage", "Agent":
 		return "agent"
 	default:
 		return "write"
