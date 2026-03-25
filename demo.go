@@ -242,6 +242,7 @@ func demoMessaging(id1, id2 int, events chan<- AgentEvent, quit <-chan struct{})
 			Type:      "agentMessage",
 			AgentID:   id1,
 			ToolName:  "SendMessage",
+			ToolID:    toolID,
 			MessageTo: names[id2],
 		}
 		if demoSleep(3*time.Second, quit) {
@@ -265,6 +266,7 @@ func demoMessaging(id1, id2 int, events chan<- AgentEvent, quit <-chan struct{})
 			Type:      "agentMessage",
 			AgentID:   id2,
 			ToolName:  "SendMessage",
+			ToolID:    toolID2,
 			MessageTo: names[id1],
 		}
 		if demoSleep(3*time.Second, quit) {

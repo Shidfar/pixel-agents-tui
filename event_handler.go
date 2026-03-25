@@ -106,6 +106,7 @@ func HandleAgentEvent(ch *Character, ev AgentEvent, office *Office) {
 		// Show message bubble with just the recipient indicator
 		ch.MessageBubble = "\u2192 " + ev.MessageTo // "→ {name}"
 		ch.MessageTimer = 4.0
+		ch.MessageToolID = ev.ToolID
 
 		// Find target character by name and create particle beam
 		if ParticlesEnabled {

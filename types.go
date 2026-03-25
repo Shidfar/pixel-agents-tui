@@ -130,6 +130,7 @@ type Character struct {
 	MessageBubble string  // e.g. "→ Alpha" — shown as speech bubble
 	MessageTimer  float64 // countdown timer for message bubble display
 	MessageTarget int     // ID of the target character (for particle beam)
+	MessageToolID string  // ToolID of the SendMessage call (for targeted beam cleanup)
 	ParentID      int     // ID of parent agent (for spawned sub-agents)
 }
 

@@ -98,8 +98,9 @@ func FindJsonlFiles(dir string) []string {
 }
 
 // maxAgents is the maximum number of agents to create from discovered JSONL files.
-// This prevents overwhelming the tiny map with dozens of characters from old sessions.
-const maxAgents = 6
+// Set high enough to accommodate a team session (1 lead + several subagents) plus
+// other concurrent sessions, but low enough to not overwhelm the map.
+const maxAgents = 12
 
 // recentFileThreshold is the maximum age of a JSONL file to be considered active.
 // Files not modified within this window are treated as dead sessions and skipped.
@@ -115,34 +116,35 @@ func agentNameFromID(id int) string {
 	return "Agent"
 }
 
-// isSubagentFile checks if a JSONL file path is from a subagent (agent team teammate).
-func isSubagentFile(path string) bool {
-	return strings.Contains(path, string(filepath.Separator)+"subagents"+string(filepath.Separator))
-}
+// teammateNameRe matches "You are [{name}]" in teammate prompts.
+var teammateNameRe = regexp.MustCompile(`You are \[([^\]]+)\]`)
 
-// subagentNameRe matches "You are [{name}]" or 'name="{name}"' patterns in teammate prompts.
-var subagentNameRe = regexp.MustCompile(`You are \[([^\]]+)\]`)
+// teamLeadRe detects TeamCreate tool calls, indicating this agent is a team lead.
+var teamLeadRe = regexp.MustCompile(`"TeamCreate"`)
 
-// extractSubagentName reads the first line of a subagent JSONL file and tries
-// to extract the teammate name from the initial prompt message.
-func extractSubagentName(path string) string {
+// extractAgentName reads the JSONL file and tries to extract the agent's name.
+// For subagent files: looks for "You are [{name}]" in the first record's prompt.
+// For main session files: scans for TeamCreate tool calls (→ "team-lead").
+func extractAgentName(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
 
-	// Read up to 8KB — the first record contains the teammate prompt
-	buf := make([]byte, 8192)
+	// Read up to 64KB — teammate prompts can be very long
+	buf := make([]byte, 65536)
 	n, _ := f.Read(buf)
 	if n == 0 {
 		return ""
 	}
 
-	// Find the first complete JSON line
-	line := string(buf[:n])
-	if idx := strings.IndexByte(line, '\n'); idx >= 0 {
-		line = line[:idx]
+	content := string(buf[:n])
+
+	// Strategy 1: Find "You are [{name}]" in the first line (subagent teammate prompt)
+	firstLine := content
+	if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
+		firstLine = firstLine[:idx]
 	}
 
 	var record struct {
@@ -150,16 +152,18 @@ func extractSubagentName(path string) string {
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(line), &record); err != nil {
-		return ""
+	if err := json.Unmarshal([]byte(firstLine), &record); err == nil {
+		var textContent string
+		if err := json.Unmarshal(record.Message.Content, &textContent); err == nil {
+			if m := teammateNameRe.FindStringSubmatch(textContent); len(m) > 1 {
+				return m[1]
+			}
+		}
 	}
 
-	// Content is either a string or array — try string first
-	var textContent string
-	if err := json.Unmarshal(record.Message.Content, &textContent); err == nil {
-		if m := subagentNameRe.FindStringSubmatch(textContent); len(m) > 1 {
-			return m[1]
-		}
+	// Strategy 2: Scan for TeamCreate tool calls — if found, this is a team lead
+	if teamLeadRe.MatchString(content) {
+		return "team-lead"
 	}
 
 	return ""
@@ -224,12 +228,10 @@ func WatchSessions(projectDir string, sessionFile string, events chan<- AgentEve
 			agent := NewAgentState(id, f)
 			registry.Set(id, agent)
 
-			// Try to extract the real teammate name from subagent files
+			// Try to extract the real agent name from JSONL content
 			name := agentNameFromID(id)
-			if isSubagentFile(f) {
-				if extracted := extractSubagentName(f); extracted != "" {
-					name = extracted
-				}
+			if extracted := extractAgentName(f); extracted != "" {
+				name = extracted
 			}
 
 			events <- AgentEvent{Type: "agentCreated", AgentID: id, AgentName: name}

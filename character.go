@@ -59,10 +59,11 @@ func UpdateCharacter(ch *Character, dt float64, office *Office) {
 			ch.MessageBubble = ""
 			ch.MessageTimer = 0
 			ch.MessageTarget = 0
-			// Clean up message beam
-			if ParticlesEnabled {
-				office.Particles.RemoveBeamsForAgent(ch.ID)
+			// Clean up only the message beam, not other active tool beams
+			if ParticlesEnabled && ch.MessageToolID != "" {
+				office.Particles.RemoveBeamsForTool(ch.ID, ch.MessageToolID)
 			}
+			ch.MessageToolID = ""
 		}
 	}
 
