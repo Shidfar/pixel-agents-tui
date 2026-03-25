@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -73,12 +76,15 @@ func ResolveProjectDir(explicit string) string {
 
 // FindJsonlFiles returns all .jsonl files in a directory and its subdirectories,
 // sorted by modification time (newest first). Claude Code stores sessions in both
-// the project dir and subdirectories.
+// the project dir and subdirectories. Agent team subagents are stored in
+// {session-uuid}/subagents/agent-{hash}.jsonl.
 func FindJsonlFiles(dir string) []string {
-	// Search both top-level and subdirectories
+	// Search top-level, one level deep, and subagents directories
 	topLevel, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	nested, _ := filepath.Glob(filepath.Join(dir, "*", "*.jsonl"))
+	subagents, _ := filepath.Glob(filepath.Join(dir, "*", "subagents", "*.jsonl"))
 	matches := append(topLevel, nested...)
+	matches = append(matches, subagents...)
 
 	sort.Slice(matches, func(i, j int) bool {
 		fi, _ := os.Stat(matches[i])
@@ -107,6 +113,56 @@ func agentNameFromID(id int) string {
 		return names[id-1]
 	}
 	return "Agent"
+}
+
+// isSubagentFile checks if a JSONL file path is from a subagent (agent team teammate).
+func isSubagentFile(path string) bool {
+	return strings.Contains(path, string(filepath.Separator)+"subagents"+string(filepath.Separator))
+}
+
+// subagentNameRe matches "You are [{name}]" or 'name="{name}"' patterns in teammate prompts.
+var subagentNameRe = regexp.MustCompile(`You are \[([^\]]+)\]`)
+
+// extractSubagentName reads the first line of a subagent JSONL file and tries
+// to extract the teammate name from the initial prompt message.
+func extractSubagentName(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	// Read up to 8KB — the first record contains the teammate prompt
+	buf := make([]byte, 8192)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return ""
+	}
+
+	// Find the first complete JSON line
+	line := string(buf[:n])
+	if idx := strings.IndexByte(line, '\n'); idx >= 0 {
+		line = line[:idx]
+	}
+
+	var record struct {
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(line), &record); err != nil {
+		return ""
+	}
+
+	// Content is either a string or array — try string first
+	var textContent string
+	if err := json.Unmarshal(record.Message.Content, &textContent); err == nil {
+		if m := subagentNameRe.FindStringSubmatch(textContent); len(m) > 1 {
+			return m[1]
+		}
+	}
+
+	return ""
 }
 
 // WatchSessions monitors a project directory for JSONL transcript files and
@@ -167,7 +223,16 @@ func WatchSessions(projectDir string, sessionFile string, events chan<- AgentEve
 			agentCount++
 			agent := NewAgentState(id, f)
 			registry.Set(id, agent)
-			events <- AgentEvent{Type: "agentCreated", AgentID: id, AgentName: agentNameFromID(id)}
+
+			// Try to extract the real teammate name from subagent files
+			name := agentNameFromID(id)
+			if isSubagentFile(f) {
+				if extracted := extractSubagentName(f); extracted != "" {
+					name = extracted
+				}
+			}
+
+			events <- AgentEvent{Type: "agentCreated", AgentID: id, AgentName: name}
 			go WatchFile(id, f, registry, events, quit)
 		}
 	}
