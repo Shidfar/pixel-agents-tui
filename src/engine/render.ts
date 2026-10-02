@@ -1,19 +1,23 @@
-// render.ts — a Scene into half-block cells for a Raster.
+// render.ts — a Scene into pixels: half-block cells for a Raster, or RGBA for an Image.
 // Pure and deterministic. The world is composed once per frame at native 352×208, lit, then
 // sampled down to the view; buffers live in `scratch` and are reused, so a frame allocates
 // no per pixel. Hot loops count in the fields of a const object, so nothing here is reassigned.
 import { catSprite, charSprite, isOpaque, planeSprite, SKY_MASK, tileSprite, wallSprite } from './art'
+import { GLYPH_H, GLYPH_W, glyphFor } from './font'
 import { COLORS, framePalette, iota, isNight, LAMP_RADIUS, LAMP_STEPS, lightColor, quantizeHour, reducedPalette, skyColors, tintFor } from './palette'
 import type { FramePalette, Tint } from './palette'
 import { sanitizeText } from './snapshots'
 import { TILE } from './types'
-import type { Camera, CameraMode, CellFrame, CharacterView, MonitorView, Prefs, Scene, ThemeName, Tone, World } from './types'
+import type { Camera, CameraMode, CellFrame, CharacterView, MonitorView, Prefs, RgbaFrame, Scene, ThemeName, Tone, World } from './types'
 import { tileCenter, wallMask } from './world'
 
 export const MAX_PAIRS = 1000
 const REDUCED_COLORS = 31   // 31² = 961 pairs, whatever the frame holds
 const HALF_BLOCK = 0x2580
 const SCALE_DELAY_SEC = 1.5
+const MAX_IMAGE_SIDE = 2048
+const MAX_IMAGE_PIXELS = (2 * 1024 * 1024) / 4   // an Image holds at most 2 MiB decoded
+const NARROW_HD_PX = 128
 
 // ── Static art facts, read once from the sprites ───────────────────
 
@@ -515,4 +519,121 @@ export function cellsToAnsi(f: CellFrame, prev: CellFrame | null): string {
     out.last = c
   }
   return out.text
+}
+
+// ── HD ─────────────────────────────────────────────────────────────
+
+type Pixels = { readonly rgba: Uint8Array; readonly width: number; readonly height: number }
+
+const fillRect = (img: Pixels, x: number, y: number, w: number, h: number, rgb: number): void => {
+  const x0 = Math.max(0, x), x1 = Math.min(img.width, x + w), y0 = Math.max(0, y), y1 = Math.min(img.height, y + h)
+  const at = scratch.cur
+  at.y = y0
+  while (at.y < y1) {
+    at.x = x0
+    while (at.x < x1) {
+      const o = (at.y * img.width + at.x) * 4
+      img.rgba[o] = (rgb >> 16) & 255
+      img.rgba[o + 1] = (rgb >> 8) & 255
+      img.rgba[o + 2] = rgb & 255
+      at.x++
+    }
+    at.y++
+  }
+}
+
+// 3×5 glyphs, 1 px apart, each pixel g×g.
+const drawText = (img: Pixels, x: number, y: number, text: string, rgb: number, g: number): void => {
+  for (const [k, ch] of [...text].entries()) {
+    const bits = glyphFor(ch)
+    for (const i of iota(GLYPH_W * GLYPH_H)) {
+      if (bits[i] === '1') fillRect(img, x + (k * (GLYPH_W + 1) + (i % GLYPH_W)) * g, y + ((i / GLYPH_W) | 0) * g, g, g, rgb)
+    }
+  }
+}
+
+const textWidth = (n: number, g: number): number => (n * (GLYPH_W + 1) - 1) * g
+
+const rectsHit = (placed: readonly number[], x0: number, y0: number, x1: number, y1: number): boolean =>
+  placed.some((_, i) => i % 4 === 0 && x0 < placed[i + 2]! && x1 > placed[i]! && y0 < placed[i + 3]! && y1 > placed[i + 1]!)
+
+function overlayRgba(img: Pixels, w: World, scene: Scene, prefs: Prefs, cam: Camera, sx: number, sy: number, g: number, lit: Lit): void {
+  const px = (x: number) => Math.round((x - cam.x) * sx), py = (y: number) => Math.round((y - cam.y) * sy)
+  const pad = g, bh = (GLYPH_H + 2) * g
+
+  const board = w.whiteboard
+  if (board.length > 0) {
+    const text = boardLine(scene.whiteboard)
+    const x0 = px(board[0]!.col * TILE), x1 = px((board[board.length - 1]!.col + 1) * TILE)
+    if (textWidth(text.length, g) <= x1 - x0) drawText(img, x0 + Math.floor((x1 - x0 - textWidth(text.length, g)) / 2), py(board[0]!.row * TILE + 7) - Math.floor((GLYPH_H * g) / 2), text, lightColor(BOARD_TEXT, lit.tint, lit.theme, 0), g)
+  }
+
+  if (prefs.labels && scene.cat.pose === 'sleep') drawText(img, px(scene.cat.x) - Math.floor((GLYPH_W * g) / 2), py(scene.cat.y - 9) - (GLYPH_H + 2) * g, 'z', DIM_Z, g)
+
+  const placed = scratch.placed
+  placed.length = 0
+  const front = scratch.order
+  front.length = 0
+  for (const c of scene.characters) front.push(c)
+  front.sort((a, b) => b.y - a.y)
+
+  // a box shifts up by its own height, at most twice, to clear what is placed
+  const lift = (x0: number, y0: number, x1: number, y1: number): number =>
+    [0, 1, 2].find(k => !rectsHit(placed, x0, y0 - k * bh, x1, y1 - k * bh)) ?? 0
+  const box = (cx: number, bottom: number, text: string, fg: number, bg: number, up: number): void => {
+    const bw = textWidth(text.length, g) + 2 * pad
+    const x0 = cx - Math.floor(bw / 2), y0 = bottom - bh - up * bh
+    fillRect(img, x0, y0, bw, bh, bg)
+    drawText(img, x0 + pad, y0 + pad, text, fg, g)
+    placed.push(x0, y0, x0 + bw, y0 + bh)
+  }
+
+  for (const ch of front) {
+    const cx = px(ch.x), labelBottom = py(ch.y - 26 + ch.bob)
+    const showLabel = prefs.labels && ch.label.length > 0
+    const bubble = ch.bubble && (ch.bubble.tone !== 'info' || prefs.labels) ? ch.bubble : undefined
+    const labelText = `${ch.isSelf ? '★' : ''}${sanitizeText(ch.label, LABEL_MAX)}`
+    const bubbleText = bubble ? sanitizeText(bubble.text, BUBBLE_MAX) : ''
+
+    const bubbleBottom = showLabel ? labelBottom - bh - g : labelBottom
+    const bw = textWidth(bubbleText.length, g) + 2 * pad, lw = textWidth(labelText.length, g) + 2 * pad
+    const up = bubble ? lift(cx - Math.floor(bw / 2), bubbleBottom - bh, cx - Math.floor(bw / 2) + bw, bubbleBottom) : 0
+    if (bubble) box(cx, bubbleBottom, bubbleText, TONES[bubble.tone].fg, TONES[bubble.tone].bg, up)
+    if (showLabel) {
+      const base = labelBottom - up * bh
+      const own = lift(cx - Math.floor(lw / 2), base - bh, cx - Math.floor(lw / 2) + lw, base)
+      box(cx, base, labelText, ch.isSelf ? SELF_FG : LABEL.fg, LABEL.bg, own)
+    }
+  }
+}
+
+export function toRgba(w: World, scene: Scene, prefs: Prefs, cam: Camera, cols: number, rows: number): RgbaFrame {
+  const lit = prepare(w, scene, prefs)
+  const s = cam.scale
+  // the view's world rectangle, drawn 1:1 (2× when narrow), and never past the Image limits
+  const rw = cols * s, rh = rows * 2 * s
+  const want = { w: Math.max(1, Math.round(rw)) * (rw < NARROW_HD_PX ? 2 : 1), h: Math.max(1, Math.round(rh)) * (rw < NARROW_HD_PX ? 2 : 1) }
+  const shrink = Math.min(1, MAX_IMAGE_SIDE / want.w, MAX_IMAGE_SIDE / want.h, Math.sqrt(MAX_IMAGE_PIXELS / (want.w * want.h)))
+  const width = Math.max(1, Math.floor(want.w * shrink)), height = Math.max(1, Math.floor(want.h * shrink))
+  const sx = width / rw, sy = height / rh
+
+  scratch.xs = grown(scratch.xs, width, n => new Int32Array(n))
+  const xs = scratch.xs
+  const cols1 = iota(width)
+  for (const i of cols1) xs[i] = Math.floor(cam.x + (i + 0.5) / sx)
+  const rgba = new Uint8Array(width * height * 4)
+  for (const j of iota(height)) {
+    const y = Math.floor(cam.y + (j + 0.5) / sy)
+    for (const i of cols1) {
+      const x = xs[i]!
+      const c = x < 0 || x >= lit.W || y < 0 || y >= lit.H ? VOID : lit.px[y * lit.W + x]!
+      const o = (j * width + i) * 4
+      rgba[o] = (c >> 16) & 255
+      rgba[o + 1] = (c >> 8) & 255
+      rgba[o + 2] = c & 255
+      rgba[o + 3] = 255
+    }
+  }
+  overlayRgba({ rgba, width, height }, w, scene, prefs, cam, sx, sy, Math.max(1, Math.round(sx)), lit)
+  return { width, height, rgba }
 }

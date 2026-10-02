@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { cellsToAnsi, encodeCells, MAX_PAIRS, toCells, updateCamera } from '../src/engine/render'
+import { cellsToAnsi, encodeCells, MAX_PAIRS, toCells, toRgba, updateCamera } from '../src/engine/render'
 import { defaultWorld, tileCenter } from '../src/engine/world'
 import { TILE_PALETTE } from '../src/engine/art.gen'
 import { catSprite, charSprite, planeSprite, SKY_MASK, tileSprite, wallSprite } from '../src/engine/art'
@@ -201,4 +201,36 @@ test('the camera never leaves the world when the view is smaller, and centers it
   const big = updateCamera(null, world, sc, { cols: 400, rows: 200 }, 'x1', 0)
   expect(big.x).toBe((352 - 400) / 2)
   expect(big.y).toBe((208 - 400) / 2)
+})
+
+test('HD frames cover the camera view as opaque RGBA within limits', async () => {
+  const sc = scene({ characters: [person()] })
+  const cam = updateCamera(null, world, sc, { cols: 89, rows: 41 }, 'x1', 0)
+  const f = toRgba(world, sc, DEFAULT_PREFS, cam, 89, 41)
+  expect([f.width, f.height]).toEqual([178, 164])
+  expect(f.rgba.length).toBe(f.width * f.height * 4)
+  expect(Array.from({ length: f.width * f.height }, (_, i) => f.rgba[i * 4 + 3]).every(a => a === 255)).toBe(true)
+  const big = toRgba(world, sc, DEFAULT_PREFS, updateCamera(null, world, sc, { cols: 255, rows: 255 }, 'fit', 0), 255, 255)
+  expect(big.width <= 2048 && big.height <= 2048).toBe(true)
+})
+
+test('HD shows the same world as the cells: a floor pixel keeps its art color, outside is void', async () => {
+  const sc = scene()
+  const cam = updateCamera(null, world, sc, { cols: 352, rows: 104 }, 'x1', 0)
+  const f = toRgba(world, sc, DEFAULT_PREFS, cam, 352, 104)
+  expect([f.width, f.height]).toEqual([352, 208])
+  const floor = tileCenter({ col: 2, row: 4 }), o = (floor.y * f.width + floor.x) * 4
+  const cells = frame(sc, 352, 104, DEFAULT_PREFS, 'x1')
+  const cell = (Math.floor(floor.y / 2) * cells.cols + floor.x) * 3 + 1
+  expect((f.rgba[o]! << 16) | (f.rgba[o + 1]! << 8) | f.rgba[o + 2]!).toBe(cells.cells[cell]!)
+  const wide = toRgba(world, sc, DEFAULT_PREFS, updateCamera(null, world, sc, { cols: 400, rows: 200 }, 'x1', 0), 400, 200)
+  expect([wide.rgba[0], wide.rgba[1], wide.rgba[2]]).toEqual([0x1a, 0x1a, 0x2e])
+})
+
+test('HD labels follow the labels pref', async () => {
+  const sc = scene({ characters: [person({ bubble: { text: 'hi', tone: 'alert' } })] })
+  const cam = updateCamera(null, world, sc, { cols: 120, rows: 40 }, 'x1', 0)
+  const a = toRgba(world, sc, DEFAULT_PREFS, cam, 120, 40).rgba
+  const b = toRgba(world, sc, { ...DEFAULT_PREFS, labels: false }, cam, 120, 40).rgba
+  expect(a.some((v, i) => v !== b[i])).toBe(true)
 })
