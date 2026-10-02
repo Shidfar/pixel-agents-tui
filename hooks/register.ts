@@ -20,6 +20,7 @@ type Bare = TruthEvent extends infer E ? (E extends { readonly now: number } ? O
 const PANE_ID = 'pixel-agents'
 const LOG = 'pixel-agents: '
 const HOUR_MS = 3_600_000
+const BLIT_BACKOFF_MS = 1000
 const THEMES: readonly ThemeName[] = ['default', 'warm', 'cool', 'dark', 'light']
 const CAMERAS: readonly CameraMode[] = ['auto', 'fit', 'x2', 'x1']
 const WORLD = defaultWorld()
@@ -45,6 +46,7 @@ const S = {
   dirty: false,
   lastSig: 0,
   lastHdSentAt: 0,
+  blitRetryAt: 0,
   alertKeys: new Set<string>(),
   demoT0: null as number | null,
   knownAgents: new Set<string>(),
@@ -116,6 +118,12 @@ const roster = ({ Box, Text }: Pick<Els, 'Box' | 'Text'>, now: number) =>
       ],
     })),
   })
+
+// A mount that costs nothing to make: blank cells (the terminal's own colors), or one clear pixel.
+const emptyBody = (els: Pick<Els, 'Raster' | 'Image'>, hd: boolean, cols: number, rows: number) =>
+  hd
+    ? els.Image({ key: 'office', columns: cols, rows, source: { rgba: new Uint8Array(4).toBase64(), width: 1, height: 1 }, alt: 'pixel office' })
+    : els.Raster({ key: 'office', columns: cols, rows, cells: encodeCells({ cols, rows, pairs: 1, cells: Uint32Array.from({ length: cols * rows * 3 }, (_, i) => (i % 3 === 0 ? 0x20 : 0x01000000)) }) })
 
 // ── helpers that take `$` ──────────────────────────────────────────
 
@@ -247,10 +255,13 @@ async function closePane($: Ctx) {
 }
 
 // A refused blit means the mounted size is not the one we drew for. Stop blitting until the
-// next ui.render says the size again, and ask for that render.
+// next ui.render says the size again, and ask for that render. A refusal that outlives the
+// remount (an Image on a terminal that only shows its alt) must not loop: no blit and no
+// in-hook frame for BLIT_BACKOFF_MS.
 async function blit($: Ctx, args: UiBlitArgs) {
   const ok = await $.ui.blit(args).then(r => r.deny === undefined, () => false)
   if (ok) return
+  S.blitRetryAt = (await $.clock.now()) + BLIT_BACKOFF_MS
   S.pane.cols = 0
   S.pane.rows = 0
   S.lastSig = 0
@@ -271,7 +282,7 @@ async function tick($: Ctx) {
       }
       return
     }
-    if (S.pane.cols === 0) return
+    if (S.pane.cols === 0 || now < S.blitRetryAt) return
     const dt = clamp((now - S.lastTickAt) / 1000, 0, 0.2)
     S.lastTickAt = now
     syncSim(now)
@@ -361,8 +372,12 @@ export function register(on: On) {
   // A new conversation under a new id: end the old file, start a fresh one.
   on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
     if (S.snap) {
-      await apply($, { type: 'end' }, true)
-      await beginSession($, await $.session.id())
+      const id = await $.session.id()
+      // the same id again (a resume of this very session) is no new conversation
+      if (id !== S.snap.sessionId) {
+        await apply($, { type: 'end' }, true)
+        await beginSession($, id)
+      }
     }
     return next(e)
   })
@@ -497,6 +512,9 @@ export function register(on: On) {
     S.pane.cols = cols
     S.pane.rows = rows
     S.pane.mode = hd ? 'image' : 'raster'
+
+    // Backing off from a refused blit: mount an empty frame and skip the drawing; the next tick paints.
+    if (now < S.blitRetryAt) return els.Box({ flexDirection: 'column', children: [emptyBody(els, hd, cols, rows), controls($, els, now)] })
 
     // Draw the current scene right here so the mount is never blank.
     syncSim(now)

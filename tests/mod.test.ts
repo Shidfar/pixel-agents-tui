@@ -137,9 +137,11 @@ test('a torn file keeps the last good copy', async ($, on) => {
 test('a failed blit asks for a re-render instead of failing every frame', async ($, on) => {
   const t = stubs(on, { blitDeny: true })
   await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })   // a turn running, so frames change and blits are attempted
   await office($)
   await $.ui.mount({ ...PANE, surface: 'terminal' })
   await t.clock.advance(1000)
+  expect(t.blits.length >= 1).toBe(true)
   expect(t.blits.length <= 2).toBe(true)
 })
 
@@ -266,4 +268,14 @@ test('a startup SessionStart is not a reset', async ($, on) => {
   await $.classic.SessionStart({ source: 'startup' })
   await t.clock.advance(1100)
   expect(t.writes.some(w => w.path.endsWith('/s9.json'))).toBe(false)
+})
+
+test('a resume of the same session id is not a reset: no endedAt, no new file', async ($, on) => {
+  const t = stubs(on, { ids: ['s1', 's1'] })
+  on('classic.SessionStart', () => ({}))
+  await start($)
+  await t.clock.advance(1100)
+  await $.classic.SessionStart({ source: 'resume' })
+  await t.clock.advance(1100)
+  expect(t.writes.every(w => w.path.endsWith('/s1.json') && JSON.parse(w.text).endedAt === undefined)).toBe(true)
 })
