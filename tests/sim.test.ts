@@ -187,10 +187,38 @@ test('the first sync after settle places newcomers instead of walking them in', 
   expect([char(sim, 's1/a1')!.x, char(sim, 's1/a1')!.y]).toEqual([seat.x, seat.y])
 })
 
-test('a stale session on first sight places nobody', async () => {
+test('a stale session with no characters yet gets none: ended, timed out, on any sync', async () => {
+  const first = createSim(world, 1)
+  first.sync(input([snap([agent({})], { endedAt: 500 })], 2_000))
+  expect(first.scene().characters.length).toBe(0)
+  const timedOut = createSim(world, 1)
+  timedOut.sync(input([snap([agent({})])], 60_000))
+  expect(timedOut.scene().characters.length).toBe(0)
+  const later = createSim(world, 1)
+  later.sync(input([snap([agent({})])]))
+  later.sync(input([snap([agent({})]), snap([agent({})], { sessionId: 's2', name: 'old', endedAt: 500 })], 2_000))
+  expect(later.scene().characters.map(c => c.key)).toEqual(['s1/main'])
+})
+
+test('a finished intern on first sight is never created: only the main character shows', async () => {
   const sim = createSim(world, 1)
-  sim.sync(input([snap([agent({})], { endedAt: 500 })], 2_000))
-  expect(sim.scene().characters.length).toBe(0)
+  const done = snap([agent({ activity: 'thinking', turnActive: true }), agent({ id: 'a1', kind: 'sub', label: 'intern', parent: 'main', activity: 'idle', doneAt: 900 })])
+  sim.sync(input([done]))
+  expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main'])
+  steps(sim, 5)
+  expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main'])
+})
+
+test('settle, then a sync after the intern finished, gives no intern', async () => {
+  const sim = createSim(world, 1)
+  const main = agent({ activity: 'thinking', turnActive: true })
+  sim.sync(input([snap([main])]))
+  sim.settle()
+  sim.sync(input([snap([main, agent({ id: 'a1', kind: 'sub', label: 'intern', parent: 'main', activity: 'idle', doneAt: 900 })])]))
+  expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main'])
+  sim.sync(input([snap([main, agent({ id: 'a1', kind: 'sub', label: 'intern', parent: 'main', activity: 'idle', doneAt: 900 })])]))
+  steps(sim, 5)
+  expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main'])
 })
 
 test('a finished intern does not come back while its snapshot lingers', async () => {

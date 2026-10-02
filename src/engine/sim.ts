@@ -168,7 +168,6 @@ export function createSim(world: World, seed: number): Sim {
     couches: new Map<string, string>(),        // couchId -> char key
     loungeSpots: new Map<string, string>(),    // posKey -> char key
     beams: new Map<string, Beam>(),
-    left: new Set<string>(),                   // finished agents already walked out: never respawn them
     seen: new Map<string, number>(),           // sessionId -> max effect id seen
     particles: [] as Particle[],
     planes: [] as Plane[],
@@ -363,7 +362,6 @@ export function createSim(world: World, seed: number): Sim {
   const removeChar = (c: Char): void => {
     st.chars.delete(c.key)
     if (c.seatId !== null && st.seats.get(c.seatId) === c.key) st.seats.delete(c.seatId)
-    if (c.agent.doneAt !== undefined) st.left.add(c.key)
     dropLounge(c)
     releaseCouch(c)
     for (const [k, b] of st.beams) if (b.charKey === c.key) st.beams.delete(k)
@@ -444,12 +442,9 @@ export function createSim(world: World, seed: number): Sim {
     return c
   }
 
-  // A finished agent whose parent isn't in the office has nobody to visit, and one that already
-  // left must not come back while its snapshot lingers.
-  const born = (e: Entry): Char | undefined =>
-    e.agent.doneAt !== undefined && (st.left.has(e.key) || !st.chars.has(`${e.snap.sessionId}/${e.agent.parent ?? 'main'}`))
-      ? undefined
-      : spawn(e)
+  // Only someone the sim has seen alive may walk out: a finished agent with no character yet is
+  // never created, so reopening the pane doesn't replay a parade of exits.
+  const born = (e: Entry): Char | undefined => (e.agent.doneAt !== undefined ? undefined : spawn(e))
 
   const retarget = (c: Char, place: boolean): void => {
     const done = c.agent.doneAt !== undefined && !c.stale
