@@ -139,10 +139,14 @@ test('a failed blit asks for a re-render instead of failing every frame', async 
   await start($)
   await $.turn.start({ text: 'go', turnId: 't1' })   // a turn running, so frames change and blits are attempted
   await office($)
-  await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const term = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await t.clock.advance(1000)
   expect(t.blits.length >= 1).toBe(true)
   expect(t.blits.length <= 2).toBe(true)
+  // the remount that followed the refusal shows the office, not an empty frame
+  const blank = new Uint8Array(Uint32Array.from({ length: 89 * 41 * 3 }, (_, i) => (i % 3 === 0 ? 0x20 : 0x01000000)).buffer).toBase64()
+  const cells = (await term.find({ type: 'Raster' }))?.props.cells
+  expect([typeof cells, cells === blank]).toEqual(['string', false])
 })
 
 test('/clear starts a new snapshot and ends the old one', async ($, on) => {

@@ -119,12 +119,6 @@ const roster = ({ Box, Text }: Pick<Els, 'Box' | 'Text'>, now: number) =>
     })),
   })
 
-// A mount that costs nothing to make: blank cells (the terminal's own colors), or one clear pixel.
-const emptyBody = (els: Pick<Els, 'Raster' | 'Image'>, hd: boolean, cols: number, rows: number) =>
-  hd
-    ? els.Image({ key: 'office', columns: cols, rows, source: { rgba: new Uint8Array(4).toBase64(), width: 1, height: 1 }, alt: 'pixel office' })
-    : els.Raster({ key: 'office', columns: cols, rows, cells: encodeCells({ cols, rows, pairs: 1, cells: Uint32Array.from({ length: cols * rows * 3 }, (_, i) => (i % 3 === 0 ? 0x20 : 0x01000000)) }) })
-
 // ── helpers that take `$` ──────────────────────────────────────────
 
 function debug($: Ctx, text: string) {
@@ -256,8 +250,8 @@ async function closePane($: Ctx) {
 
 // A refused blit means the mounted size is not the one we drew for. Stop blitting until the
 // next ui.render says the size again, and ask for that render. A refusal that outlives the
-// remount (an Image on a terminal that only shows its alt) must not loop: no blit and no
-// in-hook frame for BLIT_BACKOFF_MS.
+// remount (an Image on a terminal that only shows its alt) must not loop: the remount draws
+// the frame, but ticks send nothing for BLIT_BACKOFF_MS.
 async function blit($: Ctx, args: UiBlitArgs) {
   const ok = await $.ui.blit(args).then(r => r.deny === undefined, () => false)
   if (ok) return
@@ -512,9 +506,6 @@ export function register(on: On) {
     S.pane.cols = cols
     S.pane.rows = rows
     S.pane.mode = hd ? 'image' : 'raster'
-
-    // Backing off from a refused blit: mount an empty frame and skip the drawing; the next tick paints.
-    if (now < S.blitRetryAt) return els.Box({ flexDirection: 'column', children: [emptyBody(els, hd, cols, rows), controls($, els, now)] })
 
     // Draw the current scene right here so the mount is never blank.
     syncSim(now)
