@@ -131,7 +131,7 @@ tsc -p src/cli                        # the binary
 bash tests/cli-smoke.sh               # the binary draws demo frames, exits on EOF and compiles
 ```
 
-The smoke test writes into `~/scratch`, so create that folder first. CI runs the same checks on every push and pull request. A run of `claude plugin test` that prints `hooks modules are turned off` is the rollout switch above, not a failure, so CI reports it as a skipped step with a warning. On a tag that starts with `v`, CI also builds the four binaries and attaches them to a release.
+CI runs the same checks on every push and pull request. A run of `claude plugin test` that prints `hooks modules are turned off` is the rollout switch above, not a failure, so CI reports it as a skipped step with a warning. On a tag that starts with `v`, CI also builds the four binaries and attaches them to a release.
 
 The code is laid out like this:
 
