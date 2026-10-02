@@ -4,9 +4,9 @@
 import { CHAR_PALETTES, CHAR_TEMPLATES, TILE_PALETTE, TILE_SPRITES } from './art.gen'
 import type { Dir, Pose, Tile } from './types'
 
-export const CLEAR = 0xff000000
+const CLEAR = 0xff000000
 export const SKY_MASK = 0xfe000000
-export const OUTLINE = 0x111122
+const OUTLINE = 0x111122
 export const isOpaque = (px: number): boolean => px <= 0xffffff
 
 const hex = (h: string): number => parseInt(h.slice(1), 16)
@@ -19,6 +19,9 @@ const memo = <K, V>(cache: Map<K, V>, key: K, make: () => V): V => {
   cache.set(key, v)
   return v
 }
+
+// n mod k, always in 0..k-1: a negative or fractional frame wraps, and a bad one reads as 0.
+const wrap = (n: number, k: number): number => (Number.isFinite(n) ? ((Math.floor(n) % k) + k) % k : 0)
 
 const mirror = (px: Uint32Array, w: number): Uint32Array => px.map((_, i) => px[(i - (i % w)) + (w - 1 - (i % w))]!)
 
@@ -160,20 +163,20 @@ const chars = new Map<string, CharSprite>()
 const POSES: readonly Pose[] = ['stand', 'walk', 'type', 'read']
 const DIRS: readonly Dir[] = ['down', 'left', 'right', 'up']
 
-// 'stand' is the first walk frame, as in the Go version.
+// `frame` is the sim's cycle slot: 0..3 for walk (walk1, walk2, walk3, walk2), 0..1 for type and
+// read; any other value wraps. 'stand' is the first walk frame, as in the Go version.
 const templateName = (pose: Pose, dir: Dir, frame: number): string => {
   const d = DIR_NAME[dir]
-  const n = (k: number) => Math.abs(Math.trunc(frame)) % k
   switch (pose) {
-    case 'walk': return `walk${d}${WALK_ORDER[n(4)]}`
-    case 'type': return `${d[0]!.toLowerCase()}${d.slice(1)}Type${n(2) + 1}`
-    case 'read': return `${d[0]!.toLowerCase()}${d.slice(1)}Read${n(2) + 1}`
+    case 'walk': return `walk${d}${WALK_ORDER[wrap(frame, 4)]}`
+    case 'type': return `${d[0]!.toLowerCase()}${d.slice(1)}Type${wrap(frame, 2) + 1}`
+    case 'read': return `${d[0]!.toLowerCase()}${d.slice(1)}Read${wrap(frame, 2) + 1}`
     default: return `walk${d}1`
   }
 }
 
 export function charSprite(palette: number, pose: Pose, dir: Dir, frame: number): CharSprite {
-  const pal = ((Math.trunc(palette) % CHAR_PALETTES.length) + CHAR_PALETTES.length) % CHAR_PALETTES.length
+  const pal = wrap(palette, CHAR_PALETTES.length)
   const name = templateName(pose, dir, frame)
   return memo(chars, `${pal}/${name}/${dir === 'left' ? 'l' : 'r'}`, () => {
     const raw = resolve(CHAR_TEMPLATES[name]!, CHAR_PALETTES[pal]!)
@@ -191,7 +194,7 @@ const CAT_ROWS = { walk: [CAT_WALK1, CAT_WALK2], sit: [CAT_SIT], sleep: [CAT_SLE
 
 // Left is the mirror of right. Up and down reuse the right-facing art: the sprite sizes are fixed.
 export function catSprite(pose: 'walk' | 'sit' | 'sleep', dir: Dir, frame: number): Sprite<12, 9> {
-  const f = pose === 'walk' ? Math.abs(Math.trunc(frame)) % 2 : 0
+  const f = pose === 'walk' ? wrap(frame, 2) : 0
   const px = memo(small, `cat/${pose}/${f}/${dir === 'left' ? 'l' : 'r'}`, () => {
     const right = fromGrid(CAT_ROWS[pose][f]!, CAT_KEY)
     return dir === 'left' ? mirror(right, 12) : right

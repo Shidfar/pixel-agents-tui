@@ -8,7 +8,7 @@ import { COLORS, framePalette, iota, isNight, LAMP_RADIUS, LAMP_STEPS, lightColo
 import type { FramePalette, Tint } from './palette'
 import { sanitizeText } from './snapshots'
 import { TILE } from './types'
-import type { Camera, CameraMode, CellFrame, CharacterView, MonitorView, Prefs, RgbaFrame, Scene, ThemeName, Tone, World } from './types'
+import type { Camera, CameraMode, CellFrame, CharacterView, MonitorView, Prefs, RgbaFrame, Scene, ThemeName, Tile, Tone, World } from './types'
 import { tileCenter, wallMask } from './world'
 
 export const MAX_PAIRS = 1000
@@ -80,11 +80,21 @@ const blit = (dst: Uint32Array, dw: number, dh: number, src: Uint32Array, sw: nu
   }
 }
 
+// Furniture sprites have see-through corners; they sit on a floor, not on the void.
+const FURNITURE: ReadonlySet<Tile> = new Set<Tile>(['desk', 'computer', 'bookshelf', 'plant', 'chair', 'counter', 'appliance', 'door', 'couch', 'tv', 'coffeeTable', 'gameConsole'])
+const GROUND: ReadonlySet<Tile> = new Set<Tile>(['floor1', 'floor2', 'floor3', 'floor4', 'floor5', 'floor6', 'floor7', 'rug'])
+const NEIGHBORS = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]   // up, down, left, right
+
+// The first neighbor that is floor or rug; floor1 when there is none.
+const groundFor = (w: World, c: number, r: number): Tile =>
+  NEIGHBORS.map(d => w.tiles[r + d.row]?.[c + d.col]).find(t => t !== undefined && GROUND.has(t)) ?? 'floor1'
+
 const buildLayer = (w: World): Layer => {
   const W = w.cols * TILE, H = w.rows * TILE
   const px = new Uint32Array(W * H).fill(COLORS.void)
   const sky: number[] = []
   w.tiles.forEach((row, r) => row.forEach((t, c) => {
+    if (FURNITURE.has(t)) blit(px, W, H, tileSprite(groundFor(w, c, r)), TILE, TILE, c * TILE, r * TILE)
     const board = w.whiteboard.findIndex(p => p.col === c && p.row === r)
     const sprite = t === 'wall' ? wallSprite(wallMask(w, c, r))
       : t === 'door' ? tileSprite('doorClosed')
@@ -287,7 +297,7 @@ export function updateCamera(cam: Camera | null, w: World, scene: Scene, out: { 
   const targetScale = mode === 'fit' ? fit
     : mode === 'x1' ? 1
     : mode === 'x2' ? 2
-    : ([1, 2, 3].find(s => vw(s) >= framed.x1 - framed.x0 && vh(s) >= framed.y1 - framed.y0) ?? fit)
+    : ([1, 2, 3].find(s => s < fit && vw(s) >= framed.x1 - framed.x0 && vh(s) >= framed.y1 - framed.y0) ?? fit)
   const center = mode === 'fit' ? mid(world)
     : mode === 'auto' ? mid(framed)
     : focus ?? (chars ? mid(chars) : mid(world))
@@ -298,7 +308,8 @@ export function updateCamera(cam: Camera | null, w: World, scene: Scene, out: { 
   const hold = Math.abs(targetScale - cam.scale) < SAME
   const waiting = !hold && Math.abs(targetScale - cam.pendingScale) < SAME && Math.abs(cam.pendingScale - cam.scale) >= SAME
   const pendingSec = hold ? 0 : waiting ? cam.pendingSec + dtSec : dtSec
-  const switching = !hold && pendingSec >= SCALE_DELAY_SEC
+  // only auto waits; a chosen mode (or a pane resize in fit) takes its scale now, x and y still glide
+  const switching = !hold && (mode !== 'auto' || pendingSec >= SCALE_DELAY_SEC)
   const scale = switching ? targetScale : cam.scale
   const to = aim(scale)
   const k = 1 - Math.exp(-4 * dtSec)

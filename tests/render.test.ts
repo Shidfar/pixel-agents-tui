@@ -194,6 +194,52 @@ test('a scale change that is dropped before 1.5 s starts over', async () => {
   expect(again.scale).toBe(1)
 })
 
+test('furniture sits on a floor tile: a see-through chair pixel shows the ground beside it', async () => {
+  const seat = world.seats[0]!
+  expect(world.tiles[seat.row]![seat.col]).toBe('chair')
+  // up is the desk, so the first floor neighbour is the tile below
+  const ground = world.tiles[seat.row + 1]![seat.col]!
+  expect(ground).toBe('floor2')
+  expect(tileSprite('chair')[0]! > 0xffffff).toBe(true)
+  const f = frame(scene(), 352, 104, DEFAULT_PREFS, 'x1')
+  const x = seat.col * 16, y = seat.row * 16
+  expect(f.cells[((y / 2) * f.cols + x) * 3 + 1]).toBe(tileSprite(ground)[0]!)
+})
+
+test('auto never zooms out past fit', async () => {
+  // 332 px wide: too wide for 2x (256), so 3x would be next, but fit is 2.75 and shows more
+  const far = scene({ characters: [person({ x: 30, y: 100 }), person({ key: 'b', x: 330, y: 100 })] })
+  const cam = updateCamera(null, world, far, { cols: 128, rows: 42 }, 'auto', 0)
+  expect(Math.abs(cam.scale - Math.max(352 / 128, 208 / 84)) < 1e-9).toBe(true)
+})
+
+test('fit, x1 and x2 take their scale at once while x and y still glide; only auto waits', async () => {
+  const out = { cols: 89, rows: 41 }
+  const sc = scene({ characters: [person()] })
+  const one = updateCamera(null, world, sc, out, 'auto', 0)
+  const target = updateCamera(null, world, sc, out, 'fit', 0)
+  const fit = updateCamera(one, world, sc, out, 'fit', 0.1)
+  expect([Math.abs(fit.scale - target.scale) < 1e-9, fit.pendingSec]).toEqual([true, 0])
+  expect(fit.y < one.y && fit.y > target.y).toBe(true)
+  expect(updateCamera(one, world, sc, out, 'x2', 0.1).scale).toBe(2)
+  expect(updateCamera(fit, world, sc, out, 'x1', 0.1).scale).toBe(1)
+})
+
+test('walk frames are the cycle slots 0..3 (walk1, walk2, walk3, walk2); type and read wrap at 2', async () => {
+  const same = (a: Uint32Array, b: Uint32Array) => a.length === b.length && a.every((v, i) => v === b[i])
+  const walk = (f: number) => charSprite(1, 'walk', 'down', f).px
+  expect(same(walk(1), walk(3))).toBe(true)
+  expect(same(walk(0), walk(1))).toBe(false)
+  expect(same(walk(1), walk(2))).toBe(false)
+  expect([4, 5, 7, -1].map(f => same(walk(f), walk(f === -1 ? 3 : f - 4)))).toEqual([true, true, true, true])
+  const type = (f: number) => charSprite(1, 'type', 'up', f).px
+  expect(same(type(0), type(1))).toBe(false)
+  expect([2, 3, -1].map(f => same(type(f), type(f - 2 < 0 ? 1 : f - 2)))).toEqual([true, true, true])
+  expect(same(catSprite('walk', 'right', 0).px, catSprite('walk', 'right', 1).px)).toBe(false)
+  expect(same(catSprite('walk', 'right', 2).px, catSprite('walk', 'right', 0).px)).toBe(true)
+  expect(charSprite(NaN, 'walk', 'down', NaN).px.length).toBe(384)
+})
+
 test('the camera never leaves the world when the view is smaller, and centers it when larger', async () => {
   const sc = scene({ characters: [person({ x: 340, y: 200 })] })
   const small = updateCamera(null, world, sc, { cols: 60, rows: 20 }, 'x1', 0)
