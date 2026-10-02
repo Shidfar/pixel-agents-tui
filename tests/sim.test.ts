@@ -221,6 +221,36 @@ test('settle, then a sync after the intern finished, gives no intern', async () 
   expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main'])
 })
 
+test('an intern seen alive, then settle, then a sync where it is done: no intern', async () => {
+  const sim = createSim(world, 1)
+  const main = agent({ activity: 'thinking', turnActive: true })
+  const intern = agent({ id: 'a1', kind: 'sub', label: 'intern', parent: 'main', activity: 'reading', turnActive: true })
+  sim.sync(input([snap([main, intern])]))
+  expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main', 's1/a1'])
+  sim.settle()
+  sim.sync(input([snap([main, { ...intern, activity: 'idle', turnActive: false, doneAt: 1_000 }])]))
+  expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main'])
+})
+
+test('a session seen alive, then settle, then a sync where it ended: none of its characters', async () => {
+  const sim = createSim(world, 1)
+  const mine = snap([agent({})])
+  const other = snap([agent({}), agent({ id: 'a1', kind: 'sub', label: 'i', parent: 'main', activity: 'reading', turnActive: true })], { sessionId: 's2', name: 'other' })
+  sim.sync(input([mine, other]))
+  expect(sim.scene().characters.filter(c => c.key.startsWith('s2/')).length).toBe(2)
+  sim.settle()
+  sim.sync(input([mine, { ...other, endedAt: 1_500 }], 2_000))
+  expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main'])
+})
+
+test('a session that vanished from the input is removed by a place-sync', async () => {
+  const sim = createSim(world, 1)
+  sim.sync(input([snap([agent({})]), snap([agent({})], { sessionId: 's2', name: 'other' })]))
+  sim.settle()
+  sim.sync(input([snap([agent({})])]))
+  expect(sim.scene().characters.map(c => c.key)).toEqual(['s1/main'])
+})
+
 test('a finished intern does not come back while its snapshot lingers', async () => {
   const sim = createSim(world, 1)
   const live = snap([agent({ activity: 'thinking', turnActive: true }), agent({ id: 'a1', kind: 'sub', label: 'intern', parent: 'main', activity: 'reading', turnActive: true })])

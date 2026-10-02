@@ -447,6 +447,8 @@ export function createSim(world: World, seed: number): Sim {
   const born = (e: Entry): Char | undefined => (e.agent.doneAt !== undefined ? undefined : spawn(e))
 
   const retarget = (c: Char, place: boolean): void => {
+    // Placing means everyone is where they belong now, and a finished or departed character belongs nowhere.
+    if (place && (c.stale || c.agent.doneAt !== undefined)) { removeChar(c); return }
     const done = c.agent.doneAt !== undefined && !c.stale
     if (!done) c.done = null
     else if (c.done === null) startDone(c)
@@ -455,10 +457,7 @@ export function createSim(world: World, seed: number): Sim {
       c.idleFor = 0
     }
     aim(c, goalOf(c))
-    if (place) {
-      jump(c)
-      if (c.target.kind === 'door') removeChar(c)
-    }
+    if (place) jump(c)
   }
 
   const updateWeather = (input: SimInput): void => {
