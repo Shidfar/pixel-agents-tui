@@ -1,0 +1,7 @@
+{
+  "name": "pixel-agents",
+  "version": "0.1.0",
+  "description": "A pixel-art office where every Claude Code agent on your machine is a character, driven by real events. /office opens it.",
+  "author": { "name": "Shidfar Hodizoda" },
+  "repository": "https://github.com/Shidfar/pixel-agents-tui"
+}
