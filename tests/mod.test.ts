@@ -361,3 +361,13 @@ test('a session id that is not a safe file name is never written, and said so on
   expect(t.writes).toEqual([])
   expect(t.logs.filter(l => l.includes('not writing a state file'))).toHaveLength(1)
 })
+
+test('a pane the terminal places later is open once it is drawn, and animates', async ($, on) => {
+  const t = stubs(on, { unplaced: true })
+  await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await office($)
+  await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await t.clock.advance(1000)
+  expect(t.blits.length).toBeGreaterThanOrEqual(1)
+})

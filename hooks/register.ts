@@ -497,6 +497,12 @@ export function register(on: On) {
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE_ID) return next(e)
+    // A pane that is drawn is open, even when the terminal only placed it later: start the ticks.
+    // Only an explicit open remembers it in the prefs.
+    if (!S.pane.open) {
+      S.pane.open = true
+      S.sim?.settle()
+    }
     if (e.viewport) S.termCols = e.viewport.columns + e.props.bodyColumns + 1
     const now = await $.clock.now()
     if (e.surface !== 'terminal') {
