@@ -17,14 +17,14 @@ const BAND = {
 // Stubs must all be registered before the test's first call on $, so variations come in through opts.
 type Opts = {
   files?: Record<string, string>; blitDeny?: boolean; ids?: readonly string[]
-  store?: Record<string, unknown>; env?: Record<string, string>; ageMs?: number   // used by the tests below the plan's nine
+  store?: Record<string, unknown>; env?: Record<string, string>; ageMs?: number; unplaced?: boolean   // used by the tests below the plan's nine
 }
 function stubs(on: On, opts: Opts = {}) {
   const files = opts.files ?? {}
   const ids = opts.ids ?? ['s1']
   const n = { list: 0, id: 0 }
   const writes: { path: string; text: string }[] = [], opens: unknown[] = [], toasts: string[] = [], blits: number[] = []
-  const reads: string[] = [], runs: (readonly string[])[] = [], blitArgs: unknown[] = []
+  const reads: string[] = [], runs: (readonly string[])[] = [], blitArgs: unknown[] = [], logs: string[] = []
   const clock = mock.clock(on, { now: 1_790_000_000_000 })
   mock.store(on, opts.store ?? {})
   mock.env(on, { HOME: '/home/u', ...opts.env })
@@ -42,14 +42,14 @@ function stubs(on: On, opts: Opts = {}) {
   on('fs.read', ($, e) => { reads.push(e.path); return { value: files[e.path.split('/').pop()!] ?? '' } })
   on('process.run', ($, e) => { runs.push(e.argv); return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
   on('agent.list', () => ({ value: [] }))
-  on('ui.open', ($, e) => { opens.push(e); return { value: { isPlaced: true as const } } })
+  on('ui.open', ($, e) => { opens.push(e); return { value: opts.unplaced ? { isPlaced: false as const, reason: 'too narrow' } : { isPlaced: true as const } } })
   on('ui.close', () => ({ value: undefined }))
   on('ui.blit', ($, e) => { blits.push(1); blitArgs.push(e); return opts.blitDeny ? { deny: 'size mismatch' } : { value: {} } })
   on('ui.toast', ($, e) => { toasts.push(e.text); return { value: undefined } })
-  on('ui.log', () => ({ value: undefined }))
+  on('ui.log', ($, e) => { logs.push(e.text); return { value: undefined } })
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
   const last = () => JSON.parse(writes.filter(w => w.path.endsWith('/s1.json')).at(-1)!.text)
-  return { writes, opens, toasts, blits, blitArgs, reads, runs, clock, last }
+  return { writes, opens, toasts, blits, blitArgs, reads, runs, logs, clock, last }
 }
 const start = ($: Engine) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work/repo' })
 // The engine's own `$` raises command.run whole: who typed it and where it will show come with it.
@@ -282,4 +282,82 @@ test('a resume of the same session id is not a reset: no endedAt, no new file', 
   await $.classic.SessionStart({ source: 'resume' })
   await t.clock.advance(1100)
   expect(t.writes.every(w => w.path.endsWith('/s1.json') && JSON.parse(w.text).endedAt === undefined)).toBe(true)
+})
+
+// How a tool call ends. A tool call alone never ends the turn, so the main agent goes back to
+// 'thinking' (not 'idle') once nothing is in flight; only turn.complete makes it idle.
+const OK = { result: { stdout: '', stderr: '', interrupted: false } }
+const bash = ($: Engine) => $.tool.call({ tool: 'Bash', command: 'npm run build' })
+
+test('a Bash call that resolves leaves nothing in flight, and the turn ending makes the agent idle', async ($, on) => {
+  const t = stubs(on)
+  on('tool.call', () => OK)
+  on('turn.complete', () => ({ text: '' }))
+  await start($)
+  await bash($)
+  await t.clock.advance(1100)
+  expect([t.last().agents[0].activity, t.last().agents[0].inFlight, t.last().stats.tools]).toEqual(['thinking', {}, 1])
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await t.clock.advance(1100)
+  expect([t.last().agents[0].activity, t.last().agents[0].inFlight, t.last().stats.tools]).toEqual(['idle', {}, 1])
+})
+
+test('a denied tool call counts one error, passes the denial on, and is no longer in flight', async ($, on) => {
+  const t = stubs(on)
+  on('tool.call', () => ({ deny: 'no' }))
+  await start($)
+  expect(await bash($)).toEqual({ deny: 'no' })
+  await t.clock.advance(1100)
+  expect([t.last().stats.errors, t.last().agents[0].inFlight, t.last().agents[0].activity]).toEqual([1, {}, 'thinking'])
+})
+
+test('a tool result with isError counts one error and passes the result on', async ($, on) => {
+  const t = stubs(on)
+  on('tool.call', () => ({ isError: true as const, result: 'boom', text: 'boom' }))
+  await start($)
+  expect(await bash($)).toMatchObject({ isError: true, text: 'boom' })
+  await t.clock.advance(1100)
+  expect([t.last().stats.errors, t.last().agents[0].inFlight]).toEqual([1, {}])
+})
+
+test('a tool call that throws still rejects the caller, counts one error and leaves nothing in flight', async ($, on) => {
+  const t = stubs(on)
+  on('tool.call', () => { throw new Error('boom') })
+  await start($)
+  // the kit reports a failing bottom hook as its own "no implementation" error; the mod must pass that on as it is
+  await expect(bash($)).rejects.toThrow(/tool\.call/)
+  await t.clock.advance(1100)
+  expect([t.last().stats.errors, t.last().agents[0].inFlight]).toEqual([1, {}])
+})
+
+test('a permission request clears when its tool call resolves', async ($, on) => {
+  const t = stubs(on)
+  on('classic.PermissionRequest', () => ({}))
+  on('tool.call', () => OK)
+  await start($)
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm run build' } })
+  await t.clock.advance(1100)
+  expect(t.last().agents[0].activity).toBe('permission')
+  await bash($)
+  await t.clock.advance(1100)
+  expect([t.last().agents[0].waiting, t.last().agents[0].activity]).toEqual([undefined, 'thinking'])
+})
+
+test('a pane the terminal did not place stays closed: no pane state, no remembered open, /office tries again', async ($, on) => {
+  const t = stubs(on, { unplaced: true })
+  await start($)
+  await office($)
+  await office($)
+  expect(t.opens).toHaveLength(2)
+  // paneOpen was not saved: a second start with the same store does not open a pane on its own
+  await start($)
+  expect(t.opens).toHaveLength(2)
+})
+
+test('a session id that is not a safe file name is never written, and said so once', async ($, on) => {
+  const t = stubs(on, { ids: ['../x'] })
+  await start($)
+  await t.clock.advance(6000)
+  expect(t.writes).toEqual([])
+  expect(t.logs.filter(l => l.includes('not writing a state file'))).toHaveLength(1)
 })

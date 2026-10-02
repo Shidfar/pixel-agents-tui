@@ -21,6 +21,8 @@ const PANE_ID = 'pixel-agents'
 const LOG = 'pixel-agents: '
 const HOUR_MS = 3_600_000
 const BLIT_BACKOFF_MS = 1000
+// A session id becomes a file name, here and in the `rm` of old files: only these names are touched.
+const STATE_FILE = /^[A-Za-z0-9-]+\.json$/
 const THEMES: readonly ThemeName[] = ['default', 'warm', 'cool', 'dark', 'light']
 const CAMERAS: readonly CameraMode[] = ['auto', 'fit', 'x2', 'x1']
 const WORLD = defaultWorld()
@@ -137,6 +139,12 @@ async function savePrefs($: Ctx) {
 // heartbeat has to move updatedAt too, or an idle session would look gone after 20 s.
 async function publish($: Ctx, force: boolean) {
   if (!S.snap || !S.dir) return
+  const file = `${S.snap.sessionId}.json`
+  if (!STATE_FILE.test(file)) {
+    if (!S.writeWarned) debug($, `not writing a state file named ${JSON.stringify(file)}`)
+    S.writeWarned = true
+    return
+  }
   const now = await $.clock.now()
   const due = force || (S.dirty && now - S.lastPublish >= 250) || now - S.lastPublish >= 5000
   if (!due || !S.snap) return
@@ -144,7 +152,7 @@ async function publish($: Ctx, force: boolean) {
   S.lastPublish = now
   S.dirty = false
   try {
-    await $.fs.write(`${S.dir}/${S.snap.sessionId}.json`, JSON.stringify(S.snap))
+    await $.fs.write(`${S.dir}/${file}`, JSON.stringify(S.snap))
   } catch (err) {
     if (!S.writeWarned) debug($, `could not write the state file: ${String(err)}`)
     S.writeWarned = true
@@ -183,7 +191,7 @@ async function poll($: Ctx) {
   const now = await $.clock.now()
   try {
     const listed = (await $.fs.list(S.dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json') && f.name !== `${S.id}.json`)
-    for (const old of listed.filter(f => now - f.mtimeMs > HOUR_MS && /^[A-Za-z0-9-]+\.json$/.test(f.name))) {
+    for (const old of listed.filter(f => now - f.mtimeMs > HOUR_MS && STATE_FILE.test(f.name))) {
       await $.process.run(['rm', '-f', `${S.dir}/${old.name}`]).catch(() => undefined)
     }
     const fresh = listed.filter(f => now - f.mtimeMs <= HOUR_MS)
@@ -225,16 +233,15 @@ async function beginSession($: Ctx, id: string) {
 
 async function openPane($: Ctx) {
   const cols = S.termCols ? clamp(Math.round(S.termCols * 0.5), 56, 128) : undefined
+  const opened = await $.ui.open({ id: PANE_ID, title: 'office', focus: true, closeOnEscape: true, ...(cols ? { columns: cols } : {}) }).catch(err => {
+    debug($, `could not open the pane: ${String(err)}`)
+    return null
+  })
+  // Open but not drawn (the terminal is too narrow for a pane nobody asked for): nothing to animate or remember.
+  if (!opened?.isPlaced) return
   S.sim?.settle()
   S.cam = null
   S.pane.open = true
-  try {
-    await $.ui.open({ id: PANE_ID, title: 'office', focus: true, closeOnEscape: true, ...(cols ? { columns: cols } : {}) })
-  } catch (err) {
-    S.pane.open = false
-    debug($, `could not open the pane: ${String(err)}`)
-    return
-  }
   S.prefs = { ...S.prefs, paneOpen: true }
   await savePrefs($)
 }
