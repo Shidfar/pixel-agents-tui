@@ -16,12 +16,13 @@ const BAND = {
 // Stubs for everything the mod calls; returns the captured writes, opens and toasts.
 // Stubs must all be registered before the test's first call on $, so variations come in through opts.
 // `lists` answers fs.list by path and rejects a path it does not hold, as a missing folder does; without it every path lists `files`.
-// `failShared` makes every write under /Users/Shared reject. `files` is looked up by full path first, then by file name.
+// fs.stat then says a listed path is a plain folder, unless `stats` says otherwise. `failShared` makes every write
+// under /Users/Shared reject. `files` is looked up by full path first, then by file name.
 type Entry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; mtimeMs: number; isLink: boolean }
 type Opts = {
   files?: Record<string, string>; blitDeny?: boolean; ids?: readonly string[]
   store?: Record<string, unknown>; env?: Record<string, string>; ageMs?: number; unplaced?: boolean   // used by the tests below the plan's nine
-  lists?: Record<string, readonly Entry[]>; failShared?: boolean   // used by the sharing tests at the end
+  lists?: Record<string, readonly Entry[]>; stats?: Record<string, Partial<Pick<Entry, 'kind' | 'isLink'>>>; failShared?: boolean   // used by the sharing tests at the end
 }
 function stubs(on: On, opts: Opts = {}) {
   const files = opts.files ?? {}
@@ -58,6 +59,10 @@ function stubs(on: On, opts: Opts = {}) {
       return { value: [...hit] }
     }
     return { value: Object.keys(files).map(name => ({ name, kind: 'file' as const, size: 10, isLink: false, mtimeMs: 1_790_000_000_000 + n.list - (opts.ageMs ?? 0) })) }
+  })
+  on('fs.stat', ($, e) => {
+    if (opts.lists && !opts.lists[e.path]) throw new Error(`ENOENT ${e.path}`)
+    return { value: { kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false, ...opts.stats?.[e.path] } }
   })
   on('fs.read', ($, e) => { reads.push(e.path); return { value: files[e.path] ?? files[e.path.split('/').pop()!] ?? '' } })
   on('process.run', ($, e) => { runs.push(e.argv); return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
@@ -526,6 +531,20 @@ test('a link in place of a foreign folder or file is never listed or read', asyn
   await t.clock.advance(1100)
   expect(t.listed).not.toContain(linkDir)
   expect(t.listed).not.toContain(THEIRS)
+  expect(t.reads).toEqual([`${SHARED}/pixel-agents-bob/sessions/b1.json`])
+})
+
+test('a foreign sessions folder that is a link, or not a folder, is never listed and none of its files are read', async ($, on) => {
+  const [linked, plain] = [`${SHARED}/pixel-agents-x/sessions`, `${SHARED}/pixel-agents-y/sessions`]
+  const t = stubs(on, {
+    store: SHARE_ON,
+    lists: { [SHARED]: [dir('pixel-agents-x'), dir('pixel-agents-y'), dir('pixel-agents-bob')], [linked]: [entry('x1.json')], [plain]: [entry('y1.json')], [`${SHARED}/pixel-agents-bob/sessions`]: [entry('b1.json')] },
+    stats: { [linked]: { kind: 'dir', isLink: true }, [plain]: { kind: 'file' } },
+    files: { [`${linked}/x1.json`]: snap('x1'), [`${plain}/y1.json`]: snap('y1'), [`${SHARED}/pixel-agents-bob/sessions/b1.json`]: snap('b1') },
+  })
+  await start($)
+  await t.clock.advance(1100)
+  expect([t.listed.includes(linked), t.listed.includes(plain)]).toEqual([false, false])
   expect(t.reads).toEqual([`${SHARED}/pixel-agents-bob/sessions/b1.json`])
 })
 

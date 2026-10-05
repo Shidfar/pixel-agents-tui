@@ -227,8 +227,8 @@ async function syncShare($: Ctx) {
 }
 
 // Other accounts' files are the least trusted input here: they are only listed and read, a link
-// or anything not a plain file or folder is skipped (R9), and a path is built only from a name
-// that passed `foreignAccount` or `pickForeign`.
+// or anything not a plain file or folder is skipped (R9, the `sessions` folder included), and a
+// path is built only from a name that passed `foreignAccount` or `pickForeign`.
 async function pollShared($: Ctx, now: number) {
   try {
     const own = (await $.fs.list(S.sharedDir)).filter(f => f.kind === 'file' && f.name !== `${S.id}.json` && now - f.mtimeMs > HOUR_MS && STATE_FILE.test(f.name))
@@ -246,7 +246,10 @@ async function pollShared($: Ctx, now: number) {
   if (!accounts) return
   const found = await Promise.all(accounts.map(async account => {
     try {
-      return (await $.fs.list(sharedDir(account))).filter(f => f.kind === 'file').map(f => ({ ...f, account }))
+      const dir = sharedDir(account)
+      const at = await $.fs.stat(dir)
+      if (at.isLink || at.kind !== 'dir') return []
+      return (await $.fs.list(dir)).filter(f => f.kind === 'file').map(f => ({ ...f, account }))
     } catch {
       return []   // this account has nothing there yet, or it is not readable
     }
