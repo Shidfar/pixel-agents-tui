@@ -1,23 +1,54 @@
 // Helpers over the per-session state files. Pure: callers pass the clock in.
-import type { Alert, Snapshot, Stats } from './types'
+import type { Activity, Agent, AgentKind, Alert, EffectKind, Snapshot, Stats, Waiting } from './types'
 
 export const STALE_MS = 20_000
 export const DONE_KEEP_MS = 60_000
 
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
 
-// Shallow check only: enough that a viewer can read the context and walk the agents (and
-// sanitize their labels) without throwing. The files are written by another process and may
-// be torn, so anything unexpected is a miss.
+// Everything below is checked, to the leaves: the files are written by another process and may be
+// torn or from a newer build, and a viewer (the binary or the mod pane) must never crash on one.
+// A miss anywhere is a miss for the whole file, so the caller keeps its last good copy. Unknown
+// extra fields are fine (forward compatibility within v1).
+const isStr = (x: unknown): x is string => typeof x === 'string'
+const isNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
+// JSON has no undefined, so an optional field is either missing or valid: null is not "absent".
+const optional = (x: unknown, ok: (v: unknown) => boolean): boolean => x === undefined || ok(x)
+
+// Record<T, true> makes the compiler demand every member of the union. Own keys only, so
+// 'constructor' and '__proto__' are not members.
+const members = <T extends string>(record: Record<T, true>) => {
+  const names = new Set<string>(Object.keys(record))
+  return (x: unknown): x is T => isStr(x) && names.has(x)
+}
+const isActivity = members<Activity>({ idle: true, thinking: true, typing: true, running: true, reading: true, permission: true, question: true, planning: true, compacting: true, delegating: true })
+const isAgentKind = members<AgentKind>({ main: true, sub: true, teammate: true })
+const isEffectKind = members<EffectKind>({ spawn: true, done: true, error: true, commit: true, push: true, testPass: true, testFail: true, message: true, compact: true })
+const isWaitingKind = members<Waiting['kind']>({ permission: true, question: true })
+const isMode = members<NonNullable<Agent['mode']>>({ planning: true, compacting: true })
+
+const isInFlight = (x: unknown): boolean => isObject(x) && isStr(x.tool) && isStr(x.detail) && isNum(x.startedAt)
+const isWaiting = (x: unknown): boolean => isObject(x) && isWaitingKind(x.kind) && isStr(x.tool) && isStr(x.detail) && isNum(x.at)
+const isAgent = (x: unknown): boolean =>
+  isObject(x) && isStr(x.id) && isAgentKind(x.kind) && isStr(x.label) && optional(x.parent, isStr)
+  && isActivity(x.activity) && optional(x.detail, isStr) && isNum(x.since) && typeof x.turnActive === 'boolean'
+  && isObject(x.inFlight) && Object.values(x.inFlight).every(isInFlight)
+  && optional(x.waiting, isWaiting) && optional(x.mode, isMode) && optional(x.doneAt, isNum)
+const isEffect = (x: unknown): boolean => isObject(x) && isNum(x.id) && isEffectKind(x.kind) && isStr(x.agent) && optional(x.to, isStr) && isNum(x.at)
+const isStats = (x: unknown): boolean =>
+  isObject(x) && isStr(x.day) && isNum(x.tools) && isNum(x.edits) && isNum(x.commits) && isNum(x.permits) && isNum(x.errors)
+const isContext = (x: unknown): boolean => isObject(x) && (x.percent === null || isNum(x.percent))
+
 export function parseSnapshot(text: string): Snapshot | null {
   try {
     const j: unknown = JSON.parse(text)
     if (!isObject(j)) return null
     const ok = j.v === 1
-      && typeof j.sessionId === 'string' && typeof j.name === 'string' && typeof j.cwd === 'string'
-      && typeof j.startedAt === 'number' && typeof j.updatedAt === 'number' && typeof j.nextEffectId === 'number'
-      && Array.isArray(j.agents) && Array.isArray(j.effects) && isObject(j.stats) && isObject(j.context)
-      && j.agents.every(a => isObject(a) && typeof a.id === 'string' && typeof a.label === 'string' && typeof a.activity === 'string' && isObject(a.inFlight))
+      && isStr(j.sessionId) && isStr(j.name) && isStr(j.cwd)
+      && isNum(j.startedAt) && isNum(j.updatedAt) && optional(j.endedAt, isNum) && isNum(j.nextEffectId)
+      && isContext(j.context) && isStats(j.stats)
+      && Array.isArray(j.agents) && j.agents.every(isAgent)
+      && Array.isArray(j.effects) && j.effects.every(isEffect)
     return ok ? (j as unknown as Snapshot) : null
   } catch {
     return null
