@@ -1,21 +1,22 @@
 // The pixel-agents binary: the same office the mod draws, full-screen in the alt screen, fed by the
 // shared state folder. Node APIs live here only; the engine stays pure and gets time as a parameter.
-import { readdirSync, readFileSync, statSync, unlinkSync, watch, writeSync } from 'node:fs'
-import type { FSWatcher } from 'node:fs'
+import { constants, lstatSync, readdirSync, readFileSync, statSync, unlinkSync, watch, writeSync } from 'node:fs'
+import type { FSWatcher, Stats } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { demoSnapshots } from '../engine/demo'
 import { cellsToAnsi, toCells, updateCamera } from '../engine/render'
 import { createSim } from '../engine/sim'
-import { isStale, parseSnapshot } from '../engine/snapshots'
+import { accountOf, asForeign, foreignAccount, pickForeign, SHARED_ROOT } from '../engine/shared'
+import { alertsFor, isStale, parseSnapshot } from '../engine/snapshots'
 import { DEFAULT_PREFS } from '../engine/types'
 import type { Camera, CameraMode, CellFrame, Prefs, Snapshot, ThemeName } from '../engine/types'
 import { defaultWorld } from '../engine/world'
 
-const USAGE = 'usage: pixel-agents [--demo] [--theme default|warm|cool|dark|light] [--fps 1-30 (10)] [--dir PATH] [--frames N] [--size COLSxROWS]'
+const USAGE = 'usage: pixel-agents [--demo] [--shared] [--theme default|warm|cool|dark|light] [--fps 1-30 (10)] [--dir PATH] [--frames N] [--size COLSxROWS]'
 const THEMES: readonly ThemeName[] = ['default', 'warm', 'cool', 'dark', 'light']
 const CAMERAS: readonly CameraMode[] = ['auto', 'fit', 'x2', 'x1']
-const VALUE_FLAGS = ['--theme', '--fps', '--dir', '--frames', '--size']
+const VALUE_FLAGS = ['--theme', '--fps', '--dir', '--frames', '--size', '--shared-root']
 
 const PAN_PX = 16
 const RESCAN_MS = 2_000
@@ -29,6 +30,8 @@ const KEYS = /\x1b\[[A-D]|[\s\S]/g
 
 type Args = {
   readonly demo: boolean
+  readonly shared: boolean
+  readonly sharedRoot: string   // hidden: tests point it away from /Users/Shared
   readonly theme: ThemeName
   readonly fps: number
   readonly dir: string
@@ -43,7 +46,7 @@ const bad = (msg: string): never => {
 }
 
 function parseArgs(argv: readonly string[]): Args {
-  const stray = argv.find((a, i) => a !== '--demo' && !VALUE_FLAGS.includes(a) && !VALUE_FLAGS.includes(argv[i - 1] ?? ''))
+  const stray = argv.find((a, i) => a !== '--demo' && a !== '--shared' && !VALUE_FLAGS.includes(a) && !VALUE_FLAGS.includes(argv[i - 1] ?? ''))
   if (stray !== undefined) bad(`unknown argument ${stray}`)
   const value = (flag: string): string | null => {
     const i = argv.indexOf(flag)
@@ -60,8 +63,11 @@ function parseArgs(argv: readonly string[]): Args {
   const sizeArg = value('--size')
   const m = sizeArg === null ? null : /^([1-9]\d*)x([1-9]\d*)$/.exec(sizeArg) ?? bad('--size must look like 100x30')
   const dirArg = value('--dir')
+  const rootArg = value('--shared-root')
   return {
     demo: argv.includes('--demo'),
+    shared: argv.includes('--shared'),
+    sharedRoot: resolve(rootArg ?? SHARED_ROOT),
     theme,
     fps: int('--fps', 1, 30) ?? 10,
     dir: resolve(dirArg ?? join(homedir(), '.claude', 'pixel-agents', 'sessions')),
@@ -81,6 +87,7 @@ type AppState = {
   prev: CellFrame | null
   demoT0: number | null
   files: Map<string, { readonly stamp: string; readonly snap: Snapshot }>   // by file name: the last good copy
+  foreign: Map<string, { readonly stamp: string; readonly snap: Snapshot }>   // by `account/file name`; --shared only
   dirty: boolean
   scannedAt: number
   last: number | null
@@ -101,6 +108,7 @@ const app: AppState = {
   prev: null,
   demoT0: args.demo ? Date.now() : null,
   files: new Map(),
+  foreign: new Map(),
   dirty: true,
   scannedAt: 0,
   last: null,
@@ -159,6 +167,50 @@ function rescan(now: number): void {
   const present = new Set(names)
   for (const name of [...app.files.keys()]) if (!present.has(name)) app.files.delete(name)
   for (const name of names) readOne(name, now)
+  if (args.shared) rescanForeign(now)
+}
+
+// Other accounts' folders are read the same way but trusted less, and never written or deleted.
+// lstat, not stat: a link under a foreign folder is never followed (R9).
+const lstatOrNull = (path: string): Stats | null => {
+  try { return lstatSync(path) } catch { return null }
+}
+
+function realEntries(dir: string, keep: (st: Stats) => boolean): { readonly name: string; readonly st: Stats }[] {
+  try {
+    return readdirSync(dir).flatMap(name => {
+      const st = lstatOrNull(join(dir, name))
+      return st !== null && keep(st) ? [{ name, st }] : []
+    })
+  } catch {
+    return []   // a missing or unreadable folder is zero sessions
+  }
+}
+
+// ponytail: a folder swapped for a link, or a file grown, between the lstat and the read gets through;
+// O_NOFOLLOW only guards the last path component. Upgrade: openat and fstat on the descriptor.
+function rescanForeign(now: number): void {
+  const self = accountOf(homedir())
+  const candidates = realEntries(args.sharedRoot, st => st.isDirectory()).flatMap(({ name: folder }) => {
+    const account = foreignAccount(folder, self)
+    const sessions = join(args.sharedRoot, folder, 'sessions')
+    if (account === null || !lstatOrNull(sessions)?.isDirectory()) return []
+    return realEntries(sessions, st => st.isFile()).map(({ name, st }) => ({ account, name, path: join(sessions, name), size: st.size, mtimeMs: st.mtimeMs }))
+  })
+  const picked = pickForeign(candidates, now)
+  const present = new Set(picked.map(c => `${c.account}/${c.name}`))
+  for (const key of [...app.foreign.keys()]) if (!present.has(key)) app.foreign.delete(key)
+  for (const c of picked) {
+    const key = `${c.account}/${c.name}`
+    const stamp = `${c.mtimeMs}:${c.size}`
+    if (app.foreign.get(key)?.stamp === stamp) continue
+    try {
+      const snap = parseSnapshot(readFileSync(c.path, { encoding: 'utf8', flag: constants.O_RDONLY | constants.O_NOFOLLOW }))
+      if (snap !== null && `${snap.sessionId}.json` === c.name) app.foreign.set(key, { stamp, snap: asForeign(snap, c.account) })
+    } catch {
+      // vanished, a link, or unreadable mid-scan: keep the last good copy
+    }
+  }
 }
 
 // A missing folder makes watch throw; the 2 s rescan covers it.
@@ -199,15 +251,17 @@ function frame(): void {
   app.last = now
   const date = new Date(now)
   const day = dayOf(date)
+  // Only your own folder (or the demo) can make `waiting` count; another account's wait never does.
+  const own = [...app.files.values()].map(f => f.snap)
   // Demo stands in for the real sessions while it is on, as in the mod.
-  const snaps = app.demoT0 === null ? [...app.files.values()].map(f => f.snap) : demoSnapshots(now, app.demoT0, day)
+  const snaps = app.demoT0 === null ? [...own, ...[...app.foreign.values()].map(f => f.snap)] : demoSnapshots(now, app.demoT0, day)
   app.sim.sync({ snapshots: snaps, selfSessionId: null, now, localHour: hourOf(date), day })
   app.sim.step(dt)
   const scene = app.sim.scene()
   const cam = updateCamera(app.cam, app.world, scene, { cols, rows: rows - 1 }, app.prefs.camera, dt)
   app.cam = cam
   const cells = toCells(app.world, scene, app.prefs, { ...cam, x: cam.x + app.pan.x, y: cam.y + app.pan.y }, cols, rows - 1)
-  process.stdout.write(cellsToAnsi(cells, app.prev) + statusBar(snaps, scene.alerts.length, now, cols, rows))
+  process.stdout.write(cellsToAnsi(cells, app.prev) + statusBar(snaps, alertsFor(app.demoT0 === null ? own : snaps, null, now).length, now, cols, rows))
   app.prev = cells
   app.frames += 1
   if (args.frames !== null && app.frames >= args.frames) quit(0)
