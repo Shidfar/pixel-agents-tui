@@ -1,10 +1,12 @@
 // The mod shell: the only file that touches `$`. It turns hook events into truth events,
 // shares this session's snapshot through ~/.claude/pixel-agents/sessions, reads the other
-// sessions' files, and paints the office into a docked pane.
+// sessions' files, and paints the office into a docked pane. With `share` on it also
+// publishes to /Users/Shared and reads the folders other accounts on this Mac publish there.
 import type { Elements, EngineInterface, On, UiBlitArgs } from 'claude-code'
 import { demoSnapshots } from '../src/engine/demo'
 import { encodeCells, toCells, toRgba, updateCamera } from '../src/engine/render'
 import { hashString } from '../src/engine/rng'
+import { SHARED_ROOT, accountOf, asForeign, foreignAccount, forShare, pickForeign, sharedDir } from '../src/engine/shared'
 import { createSim } from '../src/engine/sim'
 import type { Sim } from '../src/engine/sim'
 import { alertsFor, isStale, parseSnapshot, sessionName } from '../src/engine/snapshots'
@@ -33,8 +35,13 @@ const S = {
   id: '',
   home: '',
   dir: '',
+  account: null as string | null,
+  sharedDir: '',
+  sharedFile: '',   // this session's file in the shared folder while it may exist; '' once removed
+  sharedWarned: false,
   snap: null as Snapshot | null,
   others: new Map<string, { snap: Snapshot; mtimeMs: number }>(),
+  foreign: new Map<string, { snap: Snapshot; mtimeMs: number }>(),
   sim: null as Sim | null,
   cam: null as Camera | null,
   prefs: DEFAULT_PREFS,
@@ -87,13 +94,17 @@ const readPrefs = (raw: unknown): Prefs => {
   }
 }
 
-// While the demo runs it stands in for the other sessions.
+// While the demo runs it stands in for the other sessions, other accounts' included.
 const otherSnapshots = (now: number): Snapshot[] =>
-  S.demoT0 !== null ? demoSnapshots(now, S.demoT0, dayOf(now)) : [...S.others.values()].map(o => o.snap)
+  S.demoT0 !== null ? demoSnapshots(now, S.demoT0, dayOf(now)) : [...S.others.values(), ...S.foreign.values()].map(o => o.snap)
+
+const foreignLive = (now: number): number =>
+  S.demoT0 !== null ? 0 : [...S.foreign.values()].filter(f => !isStale(f.snap, now)).length
 
 const liveSnapshots = (now: number): Snapshot[] =>
   [...(S.snap ? [S.snap] : []), ...otherSnapshots(now)].filter(s => !isStale(s, now))
 
+// D5: a wait in another account's office is never an alert, so this reads `others` and never `foreign`.
 const currentAlerts = (now: number): Alert[] =>
   alertsFor([...S.others.values()].map(o => o.snap), S.snap?.sessionId ?? null, now)
 
@@ -128,6 +139,13 @@ function debug($: Ctx, text: string) {
   $.ui.log(LOG + text, { to: 'debug' })
 }
 
+// D9: one line however many polls or writes fail; `writeWarned` stays about the own state file.
+function sharedUnusable($: Ctx, err: unknown) {
+  if (S.sharedWarned) return
+  S.sharedWarned = true
+  debug($, `the shared folder is not usable: ${String(err)}`)
+}
+
 async function savePrefs($: Ctx) {
   try {
     await $.store.set('prefs', S.prefs)
@@ -158,6 +176,13 @@ async function publish($: Ctx, force: boolean) {
     if (!S.writeWarned) debug($, `could not write the state file: ${String(err)}`)
     S.writeWarned = true
   }
+  if (!S.prefs.share || !S.sharedDir) return
+  S.sharedFile = `${S.sharedDir}/${file}`
+  try {
+    await $.fs.write(S.sharedFile, JSON.stringify(forShare(S.snap)))
+  } catch (err) {
+    sharedUnusable($, err)
+  }
 }
 
 async function apply($: Ctx, bare: Bare, force = false) {
@@ -184,9 +209,66 @@ async function ensureAgent($: Ctx, agentId: string | undefined) {
   }
 }
 
+// D7: another session of this account may have turned sharing off. Take only `share` from the
+// store (R12), and when it is off, take this session's file out of the shared folder.
+async function syncShare($: Ctx) {
+  const before = S.prefs.share
+  try {
+    const share = readPrefs(await $.store.get('prefs')).share
+    // a press that landed during the read is newer than what the store gave
+    if (S.prefs.share === before) S.prefs = { ...S.prefs, share }
+  } catch {
+    // unreadable right now: this session's value stays
+  }
+  if (S.prefs.share || !S.sharedFile) return
+  const file = S.sharedFile
+  S.sharedFile = ''
+  await $.process.run(['rm', '-f', file]).catch(() => undefined)
+}
+
+// Other accounts' files are the least trusted input here: they are only listed and read, a link
+// or anything not a plain file or folder is skipped (R9), and a path is built only from a name
+// that passed `foreignAccount` or `pickForeign`.
+async function pollShared($: Ctx, now: number) {
+  try {
+    const own = (await $.fs.list(S.sharedDir)).filter(f => f.kind === 'file' && f.name !== `${S.id}.json` && now - f.mtimeMs > HOUR_MS && STATE_FILE.test(f.name))
+    for (const old of own) await $.process.run(['rm', '-f', `${S.sharedDir}/${old.name}`]).catch(() => undefined)
+  } catch {
+    // no folder of our own yet
+  }
+  const accounts = await $.fs.list(SHARED_ROOT).then(
+    entries => entries.flatMap(e => (e.kind === 'dir' ? [foreignAccount(e.name, S.account)] : [])).filter((a): a is string => a !== null),
+    err => {
+      sharedUnusable($, err)
+      return null
+    },
+  )
+  if (!accounts) return
+  const found = await Promise.all(accounts.map(async account => {
+    try {
+      return (await $.fs.list(sharedDir(account))).filter(f => f.kind === 'file').map(f => ({ ...f, account }))
+    } catch {
+      return []   // this account has nothing there yet, or it is not readable
+    }
+  }))
+  const picked = pickForeign(found.flat(), now)
+  const keyOf = (f: { account: string; name: string }): string => `${f.account}/${f.name.slice(0, -5)}`
+  const keys = new Set(picked.map(keyOf))
+  for (const key of [...S.foreign.keys()]) if (!keys.has(key)) S.foreign.delete(key)
+  await Promise.all(picked.filter(f => S.foreign.get(keyOf(f))?.mtimeMs !== f.mtimeMs).map(async f => {
+    try {
+      const snap = parseSnapshot(await $.fs.read(`${sharedDir(f.account)}/${f.name}`))
+      if (snap && snap.sessionId === f.name.slice(0, -5)) S.foreign.set(keyOf(f), { snap: asForeign(snap, f.account), mtimeMs: f.mtimeMs })
+    } catch {
+      // unreadable right now: the last good copy stays
+    }
+  }))
+}
+
 // The only reader of other sessions: keep the last good copy of each file, drop what is gone,
 // and delete what has sat untouched for an hour. Then raise an alert for each new wait.
 async function poll($: Ctx) {
+  await syncShare($)
   await publish($, false)
   if (!S.dir) return
   const now = await $.clock.now()
@@ -210,6 +292,8 @@ async function poll($: Ctx) {
   } catch {
     // no folder yet just means nobody has written; the 1 s retry makes a debug line here noise
   }
+  if (S.prefs.share && S.sharedDir) await pollShared($, now)
+  else S.foreign.clear()
 
   const alerts = currentAlerts(now)
   const keys = new Set(alerts.map(alertKey))
@@ -326,6 +410,7 @@ function controls($: Ctx, { Box, Button, Text }: Pick<Els, 'Box' | 'Button' | 'T
   }
   const btn = (key: string, label: string, onPress: () => Promise<void>) => Button({ key, hotkey: key, label, plain: true, onPress })
   const live = liveSnapshots(now)
+  const shared = foreignLive(now)
   return Box({
     columnGap: 2,
     children: [
@@ -334,11 +419,12 @@ function controls($: Ctx, { Box, Button, Text }: Pick<Els, 'Box' | 'Button' | 'T
       btn('l', 'labels', () => set({ labels: !S.prefs.labels })),
       btn('n', 'effects', () => set({ effects: !S.prefs.effects })),
       btn('g', 'hd', () => set({ hd: !S.prefs.hd })),
+      btn('s', 'share', () => set({ share: !S.prefs.share })),
       btn('d', 'demo', async () => {
         S.demoT0 = S.demoT0 === null ? await $.clock.now() : null
         $.ui.invalidate('ui.render')
       }),
-      Text({ dimColor: true, children: [`${live.length} sessions · ${live.reduce((n, s) => n + s.agents.length, 0)} agents`] }),
+      Text({ dimColor: true, children: [`${live.length} sessions · ${live.reduce((n, s) => n + s.agents.length, 0)} agents${shared > 0 ? ` · ${shared} shared` : ''}`] }),
     ],
   })
 }
@@ -348,6 +434,8 @@ export function register(on: On) {
     const started = await next(e)
     S.home = (await $.env.get('HOME')) ?? ''
     S.dir = S.home ? `${S.home}/.claude/pixel-agents/sessions` : ''
+    S.account = accountOf(S.home)
+    S.sharedDir = S.account ? sharedDir(S.account) : ''
     const term = await $.env.get('TERM_PROGRAM')
     const kitty = await $.env.get('KITTY_WINDOW_ID')
     const id = await $.session.id()
@@ -364,7 +452,7 @@ export function register(on: On) {
     $.clock.every(1000, () => poll($).catch(err => debug($, `poll failed: ${String(err)}`)))
     if (S.prefs.paneOpen) await openPane($)
     try {
-      await $.command.register({ name: 'office', description: 'Toggle the pixel office pane', argumentHint: '[demo]', immediate: true })
+      await $.command.register({ name: 'office', description: 'Toggle the pixel office pane', argumentHint: '[demo|share]', immediate: true })
     } catch (err) {
       debug($, `could not register /office: ${String(err)}`)
     }
@@ -471,8 +559,13 @@ export function register(on: On) {
   })
 
   on('command.run', { command: 'office' }, async ($, e) => {
-    if (e.args.trim() === 'demo') {
+    const arg = e.args.trim()
+    if (arg === 'demo') {
       S.demoT0 = S.demoT0 === null ? await $.clock.now() : null
+      await openPane($)
+    } else if (arg === 'share') {
+      S.prefs = { ...S.prefs, share: !S.prefs.share }
+      await savePrefs($)
       await openPane($)
     } else if (S.pane.open) {
       await closePane($)
