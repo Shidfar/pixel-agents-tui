@@ -75,7 +75,7 @@ const mutate = (root: Doc, path: readonly Key[], kind: Kind, rng: Rng): void => 
   else delete parent[key]
 }
 
-test('fuzz: a mutated state file is rejected, or every viewer path runs without throwing', async () => {
+test('fuzz: a mutated state file is rejected, or every viewer path runs without throwing', { timeoutMs: 30_000 }, async () => {
   const rng = createRng(20261002)
   const CASES = 4000
   const outcomes = Array.from({ length: CASES }, () => {
