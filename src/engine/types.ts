@@ -144,8 +144,9 @@ export type Prefs = {
   readonly effects: boolean
   readonly hd: boolean | null            // null: not decided yet, the shell auto-detects
   readonly paneOpen: boolean
+  readonly share: boolean                // publish to and read from /Users/Shared (accounts on this Mac)
 }
-export const DEFAULT_PREFS: Prefs = { theme: 'default', camera: 'auto', labels: true, effects: true, hd: null, paneOpen: false }
+export const DEFAULT_PREFS: Prefs = { theme: 'default', camera: 'auto', labels: true, effects: true, hd: null, paneOpen: false, share: false }
 export type Camera = { readonly x: number; readonly y: number; readonly scale: number; readonly pendingScale: number; readonly pendingSec: number }
 // x, y: world px of the view's top-left (may be negative when the view is larger than the world, to center it)
 // scale: world px per output px (1 = native). Output px = one half-block row: cols × rows*2.

@@ -75,7 +75,7 @@ const alertKey = (a: Alert): string => `${a.sessionId}|${a.kind}|${a.at}`
 // A bad or old store value must not reach the renderer: take each field only if it has the right type.
 const readPrefs = (raw: unknown): Prefs => {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
-  const bool = (k: 'labels' | 'effects' | 'paneOpen'): boolean => (typeof r[k] === 'boolean' ? (r[k] as boolean) : DEFAULT_PREFS[k])
+  const bool = (k: 'labels' | 'effects' | 'paneOpen' | 'share'): boolean => (typeof r[k] === 'boolean' ? (r[k] as boolean) : DEFAULT_PREFS[k])
   return {
     theme: THEMES.find(t => t === r.theme) ?? DEFAULT_PREFS.theme,
     camera: CAMERAS.find(c => c === r.camera) ?? DEFAULT_PREFS.camera,
@@ -83,6 +83,7 @@ const readPrefs = (raw: unknown): Prefs => {
     effects: bool('effects'),
     hd: typeof r.hd === 'boolean' ? r.hd : null,
     paneOpen: bool('paneOpen'),
+    share: bool('share'),
   }
 }
 
