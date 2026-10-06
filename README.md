@@ -100,7 +100,7 @@ For each of your running sessions, other accounts see:
 - the short detail on each agent, up to 30 characters
 - today's stats
 
-They never see your working folder. The shared file is your own file, listed under [The state folder and your privacy](#the-state-folder-and-your-privacy), with the working directory left blank. The short detail is copied as it is, though: when a path appears early in a command an agent ran, such as `cat /Users/jane/notes.txt`, that path is part of the 30 characters and is shared.
+They never see your working folder. The shared file is your own file, listed under [The state folder and your privacy](#the-state-folder-and-your-privacy), with the working directory left blank. The short detail is copied as it is, though: when a path appears early in a command an agent ran or asked to run, such as `cat /Users/jane/notes.txt`, that path is part of the 30 characters and is shared.
 
 The files live in `/Users/Shared/pixel-agents-<account>/sessions/`, one per session, where `<account>` is the name of your home folder. Other accounts can read them but cannot change or delete them.
 
@@ -112,7 +112,11 @@ Alerts stay private. Another account's permission prompts and questions never pu
 
 ### Turning it off
 
-Turning sharing off removes the shared file of each of your running sessions within about a second. A session that had already ended is the exception: it leaves its file behind, marked as ended. No office shows that file, and other accounts skip it once it is an hour old, but it stays readable in `/Users/Shared` until you delete it, or until you turn sharing on again and the cleanup of files older than an hour removes it. A session killed without ending cleanly, for example because its terminal was closed, also leaves its file behind, but not marked as ended. Offices treat it as gone after 20 seconds and skip it once it is an hour old, and the same cleanup applies. To delete your folder by hand:
+A session removes its own shared file when sharing turns off, when it ends, and when `/clear` starts a new conversation. Turning sharing off does this for each of your running sessions within about a second.
+
+Only a session killed without ending cleanly, for example with `kill -9`, leaves its file behind, and that file is not marked as ended. Offices treat it as gone after 20 seconds and other accounts skip it once it is an hour old, but it stays readable in `/Users/Shared` until you delete it. There is no hourly cleanup in the shared folder, and nobody deletes another account's files. If your folder in `/Users/Shared` is a symbolic link, or not a real folder at that path, the plugin won't write there.
+
+To delete your folder by hand:
 
 ```
 rm -rf /Users/Shared/pixel-agents-$(basename "$HOME")
@@ -147,14 +151,14 @@ Each session writes only its own file, `~/.claude/pixel-agents/sessions/<session
 A file holds:
 
 - the session id, a name (the repo folder, with `-2` added for a second session in the same repo) and the working directory path
-- for each agent: its label, its current activity, the name of the tool it is using or waiting on, and a short detail of up to 30 characters (a file basename, or the start of a command, search pattern, task description or question)
+- for each agent: its label, its current activity, the name of the tool it is using or waiting on, and a short detail of up to 30 characters (a file basename, the start of a command, search pattern, task description or question, or the host name of a web page it fetched)
 - your context fill as a percentage, a few counters (tools, edits, commits, permission prompts, errors) and the last 32 effects
 
 With sharing off, which is the default, the file stays on your machine, under your home directory, and nothing leaves your home folder.
 
-With sharing on, each running session also writes a copy of its file to `/Users/Shared/pixel-agents-<account>/sessions/<sessionId>.json`, on the same schedule, and other accounts on this Mac can read it. The copy is the file above with the working directory path left blank. So everything listed above leaves your home folder except that one path, including the session name, which is the repo folder's name. A short detail is copied as it is, so a path can still leave inside one, when it appears early in a command an agent ran. It is still only a file on this Mac. See [Sharing with other accounts on this Mac](#sharing-with-other-accounts-on-this-mac).
+With sharing on, each running session also writes a copy of its file to `/Users/Shared/pixel-agents-<account>/sessions/<sessionId>.json`, on the same schedule, and other accounts on this Mac can read it. The copy is the file above with the working directory path left blank. So everything listed above leaves your home folder except that one path, including the session name, which is the repo folder's name. A short detail is copied as it is, so a path can still leave inside one, when it appears early in a command an agent ran or asked to run. It is still only a file on this Mac. See [Sharing with other accounts on this Mac](#sharing-with-other-accounts-on-this-mac).
 
-A session whose file has not been updated for 20 seconds counts as gone, and its characters walk out. Files older than an hour are deleted by whichever viewer notices them. That is for the folder under your home directory. In the shared folder, only your own sessions delete your own files older than an hour, and only while sharing is on. Nobody deletes another account's files.
+A session whose file has not been updated for 20 seconds counts as gone, and its characters walk out. Files older than an hour are deleted by whichever viewer notices them. That is for the folder under your home directory. The shared folder has no such cleanup: each of your sessions removes only its own shared file, when sharing turns off, when it ends and when `/clear` starts a new conversation, and nobody deletes another account's files. Only a session killed without ending cleanly leaves its shared file behind; see [Turning it off](#turning-it-off).
 
 Your preferences (theme, zoom, labels, effects, HD, whether the pane was open, whether sharing is on) are kept in the plugin's own store inside Claude Code. The binary does not read them.
 
