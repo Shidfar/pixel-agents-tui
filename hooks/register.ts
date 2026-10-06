@@ -37,7 +37,7 @@ const S = {
   dir: '',
   account: null as string | null,
   sharedDir: '',
-  sharedFile: '',   // this session's file in the shared folder while it may exist; '' once removed
+  sharedFile: '',   // this session's file in the shared folder, set once a write to it succeeded; '' once removed
   sharedWarned: false,
   snap: null as Snapshot | null,
   others: new Map<string, { snap: Snapshot; mtimeMs: number }>(),
@@ -146,6 +146,24 @@ function sharedUnusable($: Ctx, err: unknown) {
   debug($, `the shared folder is not usable: ${String(err)}`)
 }
 
+// R13: /Users/Shared is world-writable, so another account may have made our shared folder before we
+// did, or put a link in it. Only a missing folder (the write makes it) or the plain folder itself is used.
+async function sharedSafe($: Ctx): Promise<boolean> {
+  const at = await $.fs.stat(S.sharedDir, { resolve: true }).catch(() => null)
+  if (at === null || (!at.isLink && at.kind === 'dir' && at.realPath === S.sharedDir)) return true
+  sharedUnusable($, new Error(`${S.sharedDir} is not a plain folder`))
+  return false
+}
+
+// The only `rm` under /Users/Shared names the one file this session wrote, never a name from a listing.
+// A folder that turned unsafe is given up on, not retried every second.
+async function dropShared($: Ctx) {
+  const file = S.sharedFile
+  if (!file) return
+  S.sharedFile = ''
+  if (await sharedSafe($)) await $.process.run(['rm', '-f', file]).catch(() => undefined)
+}
+
 async function savePrefs($: Ctx) {
   try {
     await $.store.set('prefs', S.prefs)
@@ -176,10 +194,16 @@ async function publish($: Ctx, force: boolean) {
     if (!S.writeWarned) debug($, `could not write the state file: ${String(err)}`)
     S.writeWarned = true
   }
-  if (!S.prefs.share || !S.sharedDir) return
-  S.sharedFile = `${S.sharedDir}/${file}`
+  // an ended snapshot is never shared: the file goes when the session stops publishing it (end, /clear, resume, fork)
+  if (S.snap.endedAt !== undefined) {
+    await dropShared($)
+    return
+  }
+  if (!S.prefs.share || !S.sharedDir || !(await sharedSafe($))) return
+  const path = `${S.sharedDir}/${file}`
   try {
-    await $.fs.write(S.sharedFile, JSON.stringify(forShare(S.snap)))
+    await $.fs.write(path, JSON.stringify(forShare(S.snap)))
+    S.sharedFile = path
   } catch (err) {
     sharedUnusable($, err)
   }
@@ -220,22 +244,13 @@ async function syncShare($: Ctx) {
   } catch {
     // unreadable right now: this session's value stays
   }
-  if (S.prefs.share || !S.sharedFile) return
-  const file = S.sharedFile
-  S.sharedFile = ''
-  await $.process.run(['rm', '-f', file]).catch(() => undefined)
+  if (!S.prefs.share) await dropShared($)
 }
 
 // Other accounts' files are the least trusted input here: they are only listed and read, a link
 // or anything not a plain file or folder is skipped (R9, the `sessions` folder included), and a
 // path is built only from a name that passed `foreignAccount` or `pickForeign`.
 async function pollShared($: Ctx, now: number) {
-  try {
-    const own = (await $.fs.list(S.sharedDir)).filter(f => f.kind === 'file' && f.name !== `${S.id}.json` && now - f.mtimeMs > HOUR_MS && STATE_FILE.test(f.name))
-    for (const old of own) await $.process.run(['rm', '-f', `${S.sharedDir}/${old.name}`]).catch(() => undefined)
-  } catch {
-    // no folder of our own yet
-  }
   const accounts = await $.fs.list(SHARED_ROOT).then(
     entries => entries.flatMap(e => (e.kind === 'dir' ? [foreignAccount(e.name, S.account)] : [])).filter((a): a is string => a !== null),
     err => {
