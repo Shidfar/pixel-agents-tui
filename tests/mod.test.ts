@@ -14,10 +14,12 @@ const BAND = {
 } as const
 
 const SHARED = '/Users/Shared'
-const MINE = `${SHARED}/pixel-agents-u/sessions`
+const PARENT = `${SHARED}/pixel-agents-u`
+const MINE = `${PARENT}/sessions`
 
-// Every test also runs under two rules (R13): a process.run that names anything under /Users/Shared is exactly
-// `rm -f` of this session's own shared file, and the own shared folder is never listed. The stubs below record a breach.
+// Every test also runs under two rules (R13, R14): a process.run that names anything under /Users/Shared is exactly
+// `rm -f` of this session's own shared file or the ownership proof (`/usr/bin/stat -f '%u %Lp %HT'` on HOME and the
+// folders that exist), and the own shared folder is never listed. The stubs below record a breach.
 const breaches: string[] = []
 const test = (name: string, body: TestBody) => kitTest(name, async ($, on) => {
   breaches.length = 0
@@ -30,12 +32,15 @@ const test = (name: string, body: TestBody) => kitTest(name, async ($, on) => {
 // `lists` answers fs.list by path and rejects a path it does not hold, as a missing folder does; without it every path lists `files`.
 // fs.stat then says a listed path is a plain folder (a path not listed rejects), and any path is one when `lists` is not given;
 // `stats` overrides what one path says, and null makes it reject. `failShared` makes every write under /Users/Shared reject.
-// `files` is looked up by full path first, then by file name.
+// `files` is looked up by full path first, then by file name. The ownership proof is answered per path from `proof`
+// (`<uid> <mode> <type>`; this account is uid 501 and its folders are 755 Directory unless it says otherwise), or fails as `statFail` says:
+// exit 1 with nothing, garbage, exit 1 with every line, or exit 0 with only HOME's line. `proofDelayMs` holds the answer on the mock clock.
 type Entry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; mtimeMs: number; isLink: boolean }
 type Opts = {
   files?: Record<string, string>; blitDeny?: boolean; ids?: readonly string[]
   store?: Record<string, unknown>; env?: Record<string, string>; ageMs?: number; unplaced?: boolean   // used by the tests below the plan's nine
-  lists?: Record<string, readonly Entry[]>; stats?: Record<string, (Partial<Pick<Entry, 'kind' | 'isLink'>> & { realPath?: string }) | null>; failShared?: boolean   // used by the sharing tests at the end
+  lists?: Record<string, readonly Entry[]>; stats?: Record<string, (Partial<Pick<Entry, 'kind' | 'isLink'>> & { realPath?: string }) | null>; failShared?: boolean
+  proof?: Record<string, string>; statFail?: 'exit' | 'garbage' | 'partial' | 'short'; proofDelayMs?: number   // used by the sharing tests at the end
 }
 function stubs(on: On, opts: Opts = {}) {
   const files = opts.files ?? {}
@@ -43,6 +48,7 @@ function stubs(on: On, opts: Opts = {}) {
   const n = { list: 0, id: 0 }
   const writes: { path: string; text: string }[] = [], opens: unknown[] = [], toasts: string[] = [], blits: number[] = []
   const reads: string[] = [], runs: (readonly string[])[] = [], blitArgs: unknown[] = [], logs: string[] = [], listed: string[] = [], statted: string[] = []
+  const proofs: (readonly string[])[] = [], order: string[] = []   // the ownership proofs, and them and the shared writes in the order they came
   const stats = { ...opts.stats }
   const clock = mock.clock(on, { now: 1_790_000_000_000 })
   // the kit's mock.store, but reachable from the test: another session of the account writes to this store
@@ -61,6 +67,7 @@ function stubs(on: On, opts: Opts = {}) {
   on('fs.write', ($, e) => {
     if (opts.failShared && e.path.startsWith('/Users/Shared')) throw new Error('EACCES')
     writes.push({ path: e.path, text: e.text })
+    if (e.path.startsWith(SHARED)) order.push(`write ${e.path}`)
     return { value: undefined }
   })
   // mtime moves on every listing, so the mod re-reads each file every poll
@@ -81,11 +88,25 @@ function stubs(on: On, opts: Opts = {}) {
     return { value: { kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false, ...(e.resolve ? { realPath: e.path } : {}), ...stats[e.path] } }
   })
   on('fs.read', ($, e) => { reads.push(e.path); return { value: files[e.path] ?? files[e.path.split('/').pop()!] ?? '' } })
-  on('process.run', ($, e) => {
-    runs.push(e.argv)
-    const own = ids.map(id => `${MINE}/${id}.json`)
-    if (e.argv.some(a => a.includes(SHARED)) && !(e.argv.length === 3 && e.argv[0] === 'rm' && e.argv[1] === '-f' && own.includes(e.argv[2]!))) breaches.push(`run ${e.argv.join(' ')}`)
-    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  on('process.run', async ($, e) => {
+    const done = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+    const isProof = e.argv[0] === '/usr/bin/stat'
+    const ownRm = ids.map(id => ['rm', '-f', `${MINE}/${id}.json`].join('\n'))
+    const okProof = [[PARENT], [MINE], [PARENT, MINE]].map(f => ['/usr/bin/stat', '-f', '%u %Lp %HT', '/home/u', ...f].join('\n'))
+    if ((isProof || e.argv.some(a => a.includes(SHARED))) && ![...ownRm, ...okProof].includes(e.argv.join('\n'))) breaches.push(`run ${e.argv.join(' ')}`)
+    if (!isProof) {
+      runs.push(e.argv)
+      return done(0, '')
+    }
+    proofs.push(e.argv)
+    order.push(`proof ${e.argv.slice(4).join(' ')}`)
+    if (opts.proofDelayMs) await clock.sleep(opts.proofDelayMs)
+    const lines = e.argv.slice(3).map(p => opts.proof?.[p] ?? (p === '/home/u' ? '501 700 Directory' : '501 755 Directory'))
+    if (opts.statFail === 'exit') return done(1, '', 'stat: No such file or directory')
+    if (opts.statFail === 'garbage') return done(0, 'not a stat line\n')
+    if (opts.statFail === 'partial') return done(1, lines.join('\n') + '\n', 'stat: No such file or directory')
+    if (opts.statFail === 'short') return done(0, lines[0] + '\n')
+    return done(0, lines.join('\n') + '\n')
   })
   on('agent.list', () => ({ value: [] }))
   on('ui.open', ($, e) => { opens.push(e); return { value: opts.unplaced ? { isPlaced: false as const, reason: 'too narrow' } : { isPlaced: true as const } } })
@@ -95,7 +116,7 @@ function stubs(on: On, opts: Opts = {}) {
   on('ui.log', ($, e) => { logs.push(e.text); return { value: undefined } })
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
   const last = () => JSON.parse(writes.filter(w => w.path.endsWith('/s1.json')).at(-1)!.text)
-  return { writes, opens, toasts, blits, blitArgs, reads, runs, logs, listed, statted, stats, store, clock, last }
+  return { writes, opens, toasts, blits, blitArgs, reads, runs, logs, listed, statted, stats, proofs, order, store, clock, last }
 }
 const start = ($: Engine) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work/repo' })
 // The engine's own `$` raises command.run whole: who typed it and where it will show come with it.
@@ -447,7 +468,7 @@ test('with share off nothing is written, listed or read under /Users/Shared', as
   await start($)
   await t.clock.advance(6000)
   expect(t.writes.length).toBeGreaterThan(0)
-  expect([t.writes.some(w => underShared(w.path)), t.listed.some(underShared), t.reads.some(underShared), t.statted.some(underShared), t.runs]).toEqual([false, false, false, false, []])
+  expect([t.writes.some(w => underShared(w.path)), t.listed.some(underShared), t.reads.some(underShared), t.statted.some(underShared), t.runs, t.proofs]).toEqual([false, false, false, false, [], []])
 })
 
 for (const bad of ['yes', 1, null, {}]) {
@@ -723,4 +744,86 @@ test('a session id that is not a safe file name is not written to the shared fol
   await start($)
   await t.clock.advance(6000)
   expect(t.writes).toEqual([])
+})
+
+// R14: the own shared folders are proven to be this account's before anything is trusted there. `proof` says
+// what the stat process answers for a path; this account is uid 501.
+const refused = [
+  ['owned by another uid', { [MINE]: '502 755 Directory' }],
+  ['owned by another uid, one level up', { [PARENT]: '502 755 Directory' }],
+  ['writable by its group (775)', { [MINE]: '501 775 Directory' }],
+  ['writable by everyone (777), one level up', { [PARENT]: '501 777 Directory' }],
+  ['writable by others only (757)', { [MINE]: '501 757 Directory' }],
+  ['a link, one level up', { [PARENT]: '501 755 Symbolic Link' }],
+  ['a link to somewhere else', { [MINE]: '501 755 Symbolic Link' }],
+  ['a plain file', { [MINE]: '501 644 Regular File' }],
+] as const
+const refusal = (t: ReturnType<typeof stubs>) => t.logs.filter(l => l.includes('not this account\'s own folder'))
+
+for (const [why, proof] of refused) {
+  test(`an own shared folder that is ${why} is refused: no shared write, no rm, one debug line, one proof`, async ($, on) => {
+    const t = stubs(on, { store: SHARE_ON, proof })
+    await start($)
+    for (const _ of [1, 2, 3, 4]) await t.clock.advance(1000)
+    t.store.set('prefs', { share: false })
+    await t.clock.advance(1100)
+    expect([t.writes.some(w => underShared(w.path)), t.runs, refusal(t).length, t.proofs.length]).toEqual([false, [], 1, 1])
+  })
+}
+
+const unproven = [['exit', 'a non-zero exit'], ['garbage', 'garbage output'], ['partial', 'a non-zero exit that still printed every line'], ['short', 'too few lines']] as const
+for (const [statFail, what] of unproven) {
+  test(`a proof that ends with ${what} is refused`, async ($, on) => {
+    const t = stubs(on, { store: SHARE_ON, statFail })
+    await start($)
+    for (const _ of [1, 2, 3, 4]) await t.clock.advance(1000)
+    expect([t.writes.some(w => underShared(w.path)), t.runs, refusal(t).length]).toEqual([false, [], 1])
+  })
+}
+
+test('folders that exist are proven before the first write and after it, and then no more stat processes run', async ($, on) => {
+  // 700 is fine: nobody but the owner can write
+  const t = stubs(on, { store: SHARE_ON, proof: { [MINE]: '501 700 Directory' } })
+  await start($)
+  expect(t.order.slice(0, 3)).toEqual([`proof ${PARENT} ${MINE}`, `write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`])
+  for (const _ of [1, 2, 3, 4, 5, 6]) await t.clock.advance(1000)
+  expect([t.proofs.length, t.writes.filter(w => underShared(w.path)).length > 1, refusal(t)]).toEqual([2, true, []])
+})
+
+test('only the folder that exists is proven before the first write', async ($, on) => {
+  const t = stubs(on, { store: SHARE_ON, stats: { [MINE]: null } })
+  await start($)
+  expect(t.order.slice(0, 3)).toEqual([`proof ${PARENT}`, `write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`])
+})
+
+test('missing folders: the write goes ahead, the proof runs right after it, the folders are trusted from then on, and sharing off removes the file', async ($, on) => {
+  const t = stubs(on, { store: SHARE_ON, stats: { [PARENT]: null, [MINE]: null } })
+  await start($)
+  for (const _ of [1, 2, 3, 4, 5, 6]) await t.clock.advance(1000)
+  expect(t.order.slice(0, 2)).toEqual([`write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`])
+  expect([t.proofs.length, t.writes.filter(w => underShared(w.path)).length > 1]).toEqual([1, true])
+  t.store.set('prefs', { share: false })
+  await t.clock.advance(1100)
+  expect(t.runs).toEqual([['rm', '-f', `${MINE}/s1.json`]])
+})
+
+test('folders that turn out not to be ours right after the first write are refused, that file is left alone, and sharing off removes nothing', async ($, on) => {
+  const t = stubs(on, { store: SHARE_ON, stats: { [PARENT]: null, [MINE]: null }, proof: { [PARENT]: '502 755 Directory' } })
+  await start($)
+  for (const _ of [1, 2, 3, 4, 5, 6]) await t.clock.advance(1000)
+  expect([t.order.slice(0, 2), t.writes.filter(w => underShared(w.path)).length, refusal(t).length]).toEqual([[`write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`], 1, 1])
+  t.store.set('prefs', { share: false })
+  await t.clock.advance(1100)
+  expect(t.runs).toEqual([])
+})
+
+test('a file whose proof is still running is not removed: nothing is removed before the folders are proven', async ($, on) => {
+  const t = stubs(on, { store: SHARE_ON, stats: { [PARENT]: null, [MINE]: null }, proofDelayMs: 500 })
+  const starting = start($)
+  await t.clock.settle()
+  expect(t.writes.some(w => w.path === `${MINE}/s1.json`)).toBe(true)
+  await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
+  expect(t.runs).toEqual([])
+  await t.clock.advance(1000)
+  await starting
 })

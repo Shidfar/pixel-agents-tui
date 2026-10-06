@@ -38,6 +38,8 @@ const S = {
   account: null as string | null,
   sharedDir: '',
   sharedFile: '',   // this session's file in the shared folder, set once a write to it succeeded; '' once removed
+  sharedOwned: false,   // R14: the shared folders are proven to be this account's, for the rest of the session
+  sharedRefused: false,   // R14: they are not: no shared write and no rm under /Users/Shared any more
   sharedWarned: false,
   snap: null as Snapshot | null,
   others: new Map<string, { snap: Snapshot; mtimeMs: number }>(),
@@ -155,13 +157,48 @@ async function sharedSafe($: Ctx): Promise<boolean> {
   return false
 }
 
-// The only `rm` under /Users/Shared names the one file this session wrote, never a name from a listing.
-// A folder that turned unsafe is given up on, not retried every second.
+const sharedParent = (): string => S.sharedDir.slice(0, S.sharedDir.lastIndexOf('/'))
+
+// R14: a plain folder that another account made first passes the checks above, and it can then swap our file
+// for a link. So the folders must be proven ours: `stat -f` does not follow links, the type may hold a space
+// (`Symbolic Link`), and nobody but the owner may write. HOME's own line gives the uid to compare with.
+async function ownProof($: Ctx, folders: readonly string[]): Promise<boolean> {
+  const ran = await $.process.run(['/usr/bin/stat', '-f', '%u %Lp %HT', S.home, ...folders]).catch(() => null)
+  if (!ran || ran.exitCode !== 0) return false
+  const rows = ran.stdout.split('\n').filter(l => l !== '').map(l => /^(\d+) ([0-7]+) (.+)$/.exec(l))
+  if (rows.length !== folders.length + 1 || rows.some(r => r === null)) return false
+  const [home, ...mine] = rows as RegExpExecArray[]
+  return mine.every(r => r[3] === 'Directory' && r[1] === home![1] && (parseInt(r[2]!, 8) & 0o022) === 0)
+}
+
+// A refusal lasts the session. A file written just before the proof failed is left where it is: nothing may `rm` there.
+function sharedRefuse($: Ctx) {
+  S.sharedRefused = true
+  S.sharedFile = ''
+  sharedUnusable($, new Error(`${sharedParent()} is not this account's own folder; delete it so it can be made again`))
+}
+
+// Before the first shared write each of the two folders that exists must pass (a missing one is made by the write).
+async function ownedBeforeWrite($: Ctx): Promise<boolean> {
+  const there = (await Promise.all([sharedParent(), S.sharedDir].map(p => $.fs.stat(p).then(() => [p], () => [] as string[])))).flat()
+  if (there.length === 0 || (await ownProof($, there))) return true
+  sharedRefuse($)
+  return false
+}
+
+// Right after it both must exist and pass; then they are trusted, and no more stat processes run.
+async function ownedAfterWrite($: Ctx) {
+  if (await ownProof($, [sharedParent(), S.sharedDir])) S.sharedOwned = true
+  else sharedRefuse($)
+}
+
+// The only `rm` under /Users/Shared names the one file this session wrote, never a name from a listing, and
+// only in folders proven ours. A folder that turned unsafe is given up on, not retried every second.
 async function dropShared($: Ctx) {
   const file = S.sharedFile
   if (!file) return
   S.sharedFile = ''
-  if (await sharedSafe($)) await $.process.run(['rm', '-f', file]).catch(() => undefined)
+  if (S.sharedOwned && (await sharedSafe($))) await $.process.run(['rm', '-f', file]).catch(() => undefined)
 }
 
 async function savePrefs($: Ctx) {
@@ -199,14 +236,17 @@ async function publish($: Ctx, force: boolean) {
     await dropShared($)
     return
   }
-  if (!S.prefs.share || !S.sharedDir || !(await sharedSafe($))) return
+  if (!S.prefs.share || !S.sharedDir || S.sharedRefused || !(await sharedSafe($))) return
+  if (!S.sharedOwned && !(await ownedBeforeWrite($))) return
   const path = `${S.sharedDir}/${file}`
   try {
     await $.fs.write(path, JSON.stringify(forShare(S.snap)))
     S.sharedFile = path
   } catch (err) {
     sharedUnusable($, err)
+    return
   }
+  if (!S.sharedOwned) await ownedAfterWrite($)
 }
 
 async function apply($: Ctx, bare: Bare, force = false) {
