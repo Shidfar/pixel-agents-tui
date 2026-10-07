@@ -16,12 +16,13 @@ export function accountOf(home: string): string | null {
   return ACCOUNT.test(last) ? last : null
 }
 
-export function sharedFolderName(account: string): string {
-  return `pixel-agents-${account}`
+// `root` is /Users/Shared; the binary's tests point it elsewhere.
+export function sharedFolder(account: string, root = SHARED_ROOT): string {
+  return `${root}/pixel-agents-${account}`
 }
 
-export function sharedDir(account: string): string {
-  return `${SHARED_ROOT}/${sharedFolderName(account)}/sessions`
+export function sharedDir(account: string, root = SHARED_ROOT): string {
+  return `${sharedFolder(account, root)}/sessions`
 }
 
 export function foreignAccount(folderName: string, self: string | null): string | null {

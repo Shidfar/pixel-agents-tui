@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { demoSnapshots } from '../engine/demo'
 import { cellsToAnsi, toCells, updateCamera } from '../engine/render'
 import { createSim } from '../engine/sim'
-import { accountOf, foreignAccount, fromShared, pickForeign, SHARED_ROOT } from '../engine/shared'
+import { accountOf, foreignAccount, fromShared, pickForeign, SHARED_ROOT, sharedDir } from '../engine/shared'
 import { REAP_MS, SESSIONS_PARTS, alertsFor, isStale, isStateFile, parseStateFile } from '../engine/snapshots'
 import { CAMERAS, DEFAULT_PREFS, THEMES, isTheme } from '../engine/types'
 import type { Camera, CellFrame, Prefs, Snapshot, ThemeName } from '../engine/types'
@@ -212,8 +212,9 @@ function rescanForeign(now: number): void {
   app.foreignAt = now
   const candidates = realEntries(args.sharedRoot, st => st.isDirectory()).flatMap(({ name: folder }) => {
     const account = foreignAccount(folder, selfAccount)
-    const sessions = join(args.sharedRoot, folder, 'sessions')
-    if (account === null || !lstatOrNull(sessions)?.isDirectory()) return []
+    if (account === null) return []
+    const sessions = sharedDir(account, args.sharedRoot)
+    if (!lstatOrNull(sessions)?.isDirectory()) return []
     return realEntries(sessions, st => st.isFile()).map(({ name, st }) => ({ account, name, path: join(sessions, name), size: st.size, mtimeMs: st.mtimeMs }))
   })
   const entries = pickForeign(candidates, now).map(c => ({ ...c, key: `${c.account}/${c.name}` }))

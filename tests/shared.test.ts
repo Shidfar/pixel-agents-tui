@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { MAX_FOREIGN_BYTES, MAX_FOREIGN_SESSIONS, accountOf, asForeign, forShare, foreignAccount, fromShared, pickForeign, sharedDir, sharedFolderName } from '../src/engine/shared'
+import { MAX_FOREIGN_BYTES, MAX_FOREIGN_SESSIONS, accountOf, asForeign, forShare, foreignAccount, fromShared, pickForeign, sharedDir, sharedFolder } from '../src/engine/shared'
 import { parseSnapshot } from '../src/engine/snapshots'
 import type { Agent, Snapshot } from '../src/engine/types'
 
@@ -24,8 +24,9 @@ test('accountOf takes the last path part when it is a plain account name', async
 })
 
 test('the shared folder and session directory are named after the account', async () => {
-  expect(sharedFolderName('sam')).toBe('pixel-agents-sam')
+  expect(sharedFolder('sam')).toBe('/Users/Shared/pixel-agents-sam')
   expect(sharedDir('sam')).toBe('/Users/Shared/pixel-agents-sam/sessions')
+  expect(sharedDir('sam', '/mnt/shared')).toBe('/mnt/shared/pixel-agents-sam/sessions')
 })
 
 test('foreignAccount accepts another account folder and rejects everything else', async () => {
