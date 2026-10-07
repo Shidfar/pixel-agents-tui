@@ -30,7 +30,7 @@ const fromGrid = (rows: readonly string[], key: Readonly<Record<string, number>>
   Uint32Array.from(rows.join(''), ch => (ch === '.' ? CLEAR : key[ch]!))
 
 // Converted tiles: two hex chars per pixel into TILE_PALETTE, '..' transparent.
-const fromHex = (rows: readonly string[]): Uint32Array =>
+export const fromHex = (rows: readonly string[]): Uint32Array =>
   Uint32Array.from({ length: 256 }, (_, i) => {
     const p = rows[i >> 4]!.slice((i & 15) * 2, (i & 15) * 2 + 2)
     return p === '..' ? CLEAR : PALETTE[parseInt(p, 16)]!
@@ -145,7 +145,7 @@ const WALK_ORDER = [1, 2, 3, 2] as const
 
 const KEY_SLOT = { H: 'hair', K: 'skin', S: 'shirt', P: 'pants', O: 'shoes' } as const
 
-const resolve = (rows: readonly string[], pal: (typeof CHAR_PALETTES)[number]): Uint32Array =>
+export const resolve = (rows: readonly string[], pal: (typeof CHAR_PALETTES)[number]): Uint32Array =>
   Uint32Array.from(rows.join(''), ch => (ch === '.' ? CLEAR : ch === 'E' ? 0xffffff : hex(pal[KEY_SLOT[ch as keyof typeof KEY_SLOT]])))
 
 // Grow the silhouette by one pixel inside the canvas, twice: a 1 px ring is sampled only now
