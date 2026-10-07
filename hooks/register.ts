@@ -37,8 +37,7 @@ const S = {
   sharedFolder: '',   // /Users/Shared/pixel-agents-<account>, the parent of sharedDir
   sharedDir: '',
   sharedFile: '',   // this session's file in the shared folder, set once a write to it succeeded; '' once removed
-  sharedOwned: false,   // R14: the shared folders are proven to be this account's, for the rest of the session
-  sharedRefused: false,   // R14: they are not: no shared write and no rm under /Users/Shared any more
+  trust: 'unproven' as 'unproven' | 'owned' | 'refused',   // R14: the shared folders are proven this account's, or refused for the rest of the session
   snap: null as Snapshot | null,
   others: new Map<string, Seen>(),   // by session id
   foreign: new Map<string, Seen>(),   // by `account:id`, which is the session id asForeign gives it
@@ -88,6 +87,9 @@ function resetPane() {
   S.pane.cols = 0
   S.pane.rows = 0
 }
+
+// Sharing is on: this account has a shared folder and the person has not turned it off.
+const sharing = (): boolean => S.prefs.share && S.sharedDir !== ''
 
 // While the demo runs it stands in for the other sessions, other accounts' included.
 const otherSnapshots = (now: number): Snapshot[] =>
@@ -185,25 +187,19 @@ async function ownProof($: Ctx, folders: readonly string[]): Promise<boolean> {
   return mine.every(r => r[3] === 'Directory' && r[1] === home![1] && (parseInt(r[2]!, 8) & 0o022) === 0)
 }
 
-// A refusal lasts the session. A file written just before the proof failed is left where it is: nothing may `rm` there.
-function sharedRefuse($: Ctx) {
-  S.sharedRefused = true
+// 'refused' is final: a proof that passes late never undoes one that failed.
+const setTrust = (trust: 'owned' | 'refused') => {
+  if (S.trust !== 'refused') S.trust = trust
+}
+
+// Every folder in the list must pass `ownProof` (none: nothing exists to prove, the write makes it). A failure refuses
+// sharing for the session, and a file written just before it is left where it is: nothing may `rm` there.
+async function prove($: Ctx, folders: readonly string[]): Promise<boolean> {
+  if (folders.length === 0 || (await ownProof($, folders))) return true
+  setTrust('refused')
   S.sharedFile = ''
   sharedUnusable($, new Error(`${S.sharedFolder} is not this account's own folder; delete it so it can be made again`))
-}
-
-// Before the first shared write each of the two folders that exists must pass (a missing one is made by the write).
-async function ownedBeforeWrite($: Ctx): Promise<boolean> {
-  const there = (await Promise.all([S.sharedFolder, S.sharedDir].map(p => $.fs.stat(p).then(() => [p], () => [] as string[])))).flat()
-  if (there.length === 0 || (await ownProof($, there))) return true
-  sharedRefuse($)
   return false
-}
-
-// Right after it both must exist and pass; then they are trusted, and no more stat processes run.
-async function ownedAfterWrite($: Ctx) {
-  if (await ownProof($, [S.sharedFolder, S.sharedDir])) S.sharedOwned = true
-  else sharedRefuse($)
 }
 
 // The only `rm` under /Users/Shared names the one file this session wrote, never a name from a listing, and
@@ -212,7 +208,26 @@ async function dropShared($: Ctx) {
   const file = S.sharedFile
   if (!file) return
   S.sharedFile = ''
-  if (S.sharedOwned && (await sharedSafe($))) await $.process.run(['rm', '-f', file]).catch(() => undefined)
+  if (S.trust === 'owned' && (await sharedSafe($))) await $.process.run(['rm', '-f', file]).catch(() => undefined)
+}
+
+// The only write under /Users/Shared, guarded in this order: not refused, R13's link check, then (until proven) R14's
+// proof of each folder that exists before it, and of both right after the first write, which earns the trust.
+async function writeShared($: Ctx, name: string, text: string) {
+  if (S.trust === 'refused' || !(await sharedSafe($))) return
+  if (S.trust === 'unproven') {
+    const there = (await Promise.all([S.sharedFolder, S.sharedDir].map(p => $.fs.stat(p).then(() => [p], () => [] as string[])))).flat()
+    if (!(await prove($, there))) return
+  }
+  const path = `${S.sharedDir}/${name}`
+  try {
+    await $.fs.write(path, text)
+    S.sharedFile = path
+  } catch (err) {
+    sharedUnusable($, err)
+    return
+  }
+  if (S.trust === 'unproven' && (await prove($, [S.sharedFolder, S.sharedDir]))) setTrust('owned')
 }
 
 async function setPrefs($: Ctx, over: Partial<Prefs>) {
@@ -244,21 +259,8 @@ async function publish($: Ctx, now: number, force: boolean) {
     warnOnce($, 'write', `could not write the state file: ${String(err)}`)
   }
   // an ended snapshot is never shared: the file goes when the session stops publishing it (end, /clear, resume, fork)
-  if (S.snap.endedAt !== undefined) {
-    await dropShared($)
-    return
-  }
-  if (!S.prefs.share || !S.sharedDir || S.sharedRefused || !(await sharedSafe($))) return
-  if (!S.sharedOwned && !(await ownedBeforeWrite($))) return
-  const path = `${S.sharedDir}/${file}`
-  try {
-    await $.fs.write(path, JSON.stringify(forShare(S.snap)))
-    S.sharedFile = path
-  } catch (err) {
-    sharedUnusable($, err)
-    return
-  }
-  if (!S.sharedOwned) await ownedAfterWrite($)
+  if (S.snap.endedAt !== undefined) await dropShared($)
+  else if (sharing()) await writeShared($, file, JSON.stringify(forShare(S.snap)))
 }
 
 async function apply($: Ctx, bare: Bare, force = false) {
@@ -356,7 +358,7 @@ async function poll($: Ctx) {
   } catch {
     // no folder yet just means nobody has written; the 1 s retry makes a debug line here noise
   }
-  if (S.prefs.share && S.sharedDir) await pollShared($, now)
+  if (sharing()) await pollShared($, now)
   else S.foreign.clear()
 
   const alerts = currentAlerts(now)
