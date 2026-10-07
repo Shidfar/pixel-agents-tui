@@ -19,10 +19,12 @@ import { MAX_DT, cycle, dayOf, hourOf } from '../src/shell/common'
 type Ctx = EngineInterface
 type Els = Elements['terminal']
 type Seen = { snap: Snapshot; mtimeMs: number }
+type Picture = { cells: string } | { source: { rgba: string; width: number; height: number } }
 
 const PANE_ID = 'pixel-agents'
 const LOG = 'pixel-agents: '
 const BLIT_BACKOFF_MS = 1000
+const HD_FRAME_MS = 125
 const WORLD = defaultWorld()
 
 // All module state lives here; a reload empties it and the next events rebuild it.
@@ -52,7 +54,8 @@ const S = {
   lastPublish: 0,
   writeWarned: false,
   dirty: false,
-  lastSig: 0,
+  rosterSig: 0,   // the roster's words, hashed, to tell when it needs redrawing
+  prev: null as Uint8Array | Uint32Array | null,   // the last frame drawn, to tell when a new one differs; null forces a send
   lastHdSentAt: 0,
   blitRetryAt: 0,
   alertKeys: new Set<string>(),
@@ -63,9 +66,6 @@ const S = {
 // ── helpers that do not touch `$` ──────────────────────────────────
 
 const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n))
-// FNV-1a over 32-bit words: enough to tell two frames apart.
-const hash32 = (w: Uint32Array): number => w.reduce((h, x) => Math.imul(h ^ x, 16777619) >>> 0, 2166136261)
-const hashRgba = (px: Uint8Array): number => hash32(new Uint32Array(px.buffer, px.byteOffset, px.byteLength >> 2))
 const alertKey = (a: Alert): string => `${a.sessionId}|${a.kind}|${a.at}`
 
 // A bad or old store value must not reach the renderer: take each field only if it has the right type.
@@ -97,6 +97,29 @@ const currentAlerts = (now: number): Alert[] =>
 function syncSim(now: number) {
   if (!S.sim || !S.snap) return
   S.sim.sync({ snapshots: [S.snap, ...otherSnapshots(now)], selfSessionId: S.snap.sessionId, now, localHour: hourOf(now), day: dayOf(now) })
+}
+
+// The office at the pane's size and mode. A tick passes the seconds since the last one, which move the sim and
+// the camera, and gets a picture only when it differs from the last (HD at most every HD_FRAME_MS). A render
+// passes null: nothing moves, and the picture is always drawn so the mount is never blank.
+function drawFrame(sim: Sim, now: number, dt: null): Picture
+function drawFrame(sim: Sim, now: number, dt: number): Picture | null
+function drawFrame(sim: Sim, now: number, dt: number | null): Picture | null {
+  syncSim(now)
+  if (dt !== null) sim.step(dt)
+  const { cols, rows } = S.pane
+  const scene = sim.scene()
+  const cam = updateCamera(S.cam, WORLD, scene, { cols, rows }, S.prefs.camera, dt ?? 0)
+  S.cam = cam
+  const hd = S.pane.mode === 'image'
+  if (hd && dt !== null && now - S.lastHdSentAt < HD_FRAME_MS) return null
+  const frame = hd ? toRgba(WORLD, scene, S.prefs, cam, cols, rows) : toCells(WORLD, scene, S.prefs, cam, cols, rows)
+  const pixels = 'rgba' in frame ? frame.rgba : frame.cells
+  const prev = S.prev
+  S.prev = pixels
+  if (hd) S.lastHdSentAt = now
+  if (dt !== null && prev !== null && prev.length === pixels.length && pixels.every((x, i) => x === prev[i])) return null
+  return 'rgba' in frame ? { source: { rgba: frame.rgba.toBase64(), width: frame.width, height: frame.height } } : { cells: encodeCells(frame) }
 }
 
 // The words the Desktop roster shows, as one string, to tell when it needs redrawing.
@@ -385,7 +408,7 @@ async function blit($: Ctx, args: UiBlitArgs) {
   S.blitRetryAt = (await $.clock.now()) + BLIT_BACKOFF_MS
   S.pane.cols = 0
   S.pane.rows = 0
-  S.lastSig = 0
+  S.prev = null
   $.ui.invalidate('ui.render')
 }
 
@@ -397,8 +420,8 @@ async function tick($: Ctx) {
     if (S.pane.mode === 'roster') {
       // plain text: redrawn only when its words change
       const sig = hashString(rosterText(now))
-      if (sig !== S.lastSig) {
-        S.lastSig = sig
+      if (sig !== S.rosterSig) {
+        S.rosterSig = sig
         $.ui.invalidate('ui.render')
       }
       return
@@ -406,29 +429,10 @@ async function tick($: Ctx) {
     if (S.pane.cols === 0 || now < S.blitRetryAt) return
     const dt = clamp((now - S.lastTickAt) / 1000, 0, MAX_DT)
     S.lastTickAt = now
-    syncSim(now)
-    S.sim.step(dt)
-    const { cols, rows } = S.pane
-    const scene = S.sim.scene()
-    S.cam = updateCamera(S.cam, WORLD, scene, { cols, rows }, S.prefs.camera, dt)
-    if (S.pane.mode === 'raster') {
-      const f = toCells(WORLD, scene, S.prefs, S.cam, cols, rows)
-      const sig = hash32(f.cells)
-      if (sig !== S.lastSig) {
-        S.lastSig = sig
-        await blit($, { requestId: PANE_ID, key: 'office', cells: encodeCells(f) })
-      }
-    } else if (now - S.lastHdSentAt >= 125) {
-      S.lastHdSentAt = now
-      const f = toRgba(WORLD, scene, S.prefs, S.cam, cols, rows)
-      const sig = hashRgba(f.rgba)
-      if (sig !== S.lastSig) {
-        S.lastSig = sig
-        await blit($, { requestId: PANE_ID, key: 'office', source: { rgba: f.rgba.toBase64(), width: f.width, height: f.height } })
-      }
-    }
+    const picture = drawFrame(S.sim, now, dt)
+    if (picture) await blit($, { requestId: PANE_ID, key: 'office', ...picture })
     // Every 10 s at 10 fps: the frame cost, for measuring big panes in a real session.
-    if (++S.tickN % 100 === 0) debug($, `frame ${(await $.clock.now()) - now} ms, ${cols}x${rows} ${S.pane.mode}`)
+    if (++S.tickN % 100 === 0) debug($, `frame ${(await $.clock.now()) - now} ms, ${S.pane.cols}x${S.pane.rows} ${S.pane.mode}`)
   } catch (err) {
     debug($, `tick failed: ${String(err)}`)
   } finally {
@@ -637,7 +641,7 @@ export function register(on: On) {
     const now = await $.clock.now()
     if (e.surface !== 'terminal') {
       S.pane.mode = 'roster'
-      S.lastSig = hashString(rosterText(now))
+      S.rosterSig = hashString(rosterText(now))
       return roster($.ui.resolve(e), now)
     }
     if (!S.sim) return next(e)
@@ -651,20 +655,10 @@ export function register(on: On) {
     S.pane.mode = hd ? 'image' : 'raster'
 
     // Draw the current scene right here so the mount is never blank.
-    syncSim(now)
-    const scene = S.sim.scene()
-    S.cam = updateCamera(S.cam, WORLD, scene, { cols, rows }, S.prefs.camera, 0)
-    const body = (() => {
-      if (hd) {
-        const f = toRgba(WORLD, scene, S.prefs, S.cam, cols, rows)
-        S.lastSig = hashRgba(f.rgba)
-        S.lastHdSentAt = now
-        return els.Image({ key: 'office', columns: cols, rows, source: { rgba: f.rgba.toBase64(), width: f.width, height: f.height }, alt: 'pixel office' })
-      }
-      const f = toCells(WORLD, scene, S.prefs, S.cam, cols, rows)
-      S.lastSig = hash32(f.cells)
-      return els.Raster({ key: 'office', columns: cols, rows, cells: encodeCells(f) })
-    })()
+    const picture = drawFrame(S.sim, now, null)
+    const body = 'source' in picture
+      ? els.Image({ key: 'office', columns: cols, rows, ...picture, alt: 'pixel office' })
+      : els.Raster({ key: 'office', columns: cols, rows, ...picture })
     return els.Box({ flexDirection: 'column', children: [body, controls($, els, now)] })
   })
 
