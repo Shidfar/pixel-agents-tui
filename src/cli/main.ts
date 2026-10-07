@@ -218,7 +218,7 @@ function rescanForeign(now: number): void {
     return realEntries(sessions, st => st.isFile()).map(({ name, st }) => ({ account, name, path: join(sessions, name), size: st.size, mtimeMs: st.mtimeMs }))
   })
   const entries = pickForeign(candidates, now).map(c => ({ ...c, key: `${c.account}/${c.name}` }))
-  refresh(app.foreign, entries, e => fromShared(readFileSync(e.path, { encoding: 'utf8', flag: constants.O_RDONLY | constants.O_NOFOLLOW }), e.name, e.account))
+  refresh(app.foreign, entries, e => fromShared(e.name, readFileSync(e.path, { encoding: 'utf8', flag: constants.O_RDONLY | constants.O_NOFOLLOW }), e.account))
 }
 
 // A missing folder makes watch throw; the 2 s rescan covers it.

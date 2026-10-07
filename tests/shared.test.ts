@@ -119,7 +119,7 @@ test('pickForeign returns the caller objects, keeps their extra fields, and does
 
 test('fromShared shows a valid file as the account\'s copy and rejects one whose id is not its name', async () => {
   const text = JSON.stringify(forShare(snap()))
-  expect(fromShared(text, 's1.json', 'jane.doe')).toEqual(asForeign(forShare(snap()), 'jane.doe'))
-  expect(fromShared(text, 's2.json', 'jane.doe')).toBe(null)
-  expect(fromShared('not json', 's1.json', 'jane.doe')).toBe(null)
+  expect(fromShared('s1.json', text, 'jane.doe')).toEqual(asForeign(forShare(snap()), 'jane.doe'))
+  expect(fromShared('s2.json', text, 'jane.doe')).toBe(null)
+  expect(fromShared('s1.json', 'not json', 'jane.doe')).toBe(null)
 })

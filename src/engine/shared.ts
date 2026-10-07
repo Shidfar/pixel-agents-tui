@@ -48,7 +48,7 @@ export function asForeign(s: Snapshot, account: string): Snapshot {
 }
 
 // What a viewer makes of another account's file: valid, named for its own session id, shown as theirs.
-export function fromShared(text: string, name: string, account: string): Snapshot | null {
+export function fromShared(name: string, text: string, account: string): Snapshot | null {
   const snap = parseStateFile(name, text)
   return snap === null ? null : asForeign(snap, account)
 }
