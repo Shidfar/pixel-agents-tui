@@ -73,9 +73,14 @@ export function isStale(s: Snapshot, now: number): boolean {
   return s.endedAt !== undefined || now - s.updatedAt > STALE_MS
 }
 
+// shared.ts's asForeign puts `account:` in front of another account's session id. An own id is a state
+// file name (STATE_FILE), which never holds a colon, so a colon marks a session from another account.
+export const isForeign = (s: Snapshot): boolean => s.sessionId.includes(':')
+
+// Other accounts' waits never alert: only the user's own sessions can ask for their attention.
 export function alertsFor(snaps: readonly Snapshot[], selfSessionId: string | null, now: number): Alert[] {
   return snaps
-    .filter(s => s.sessionId !== selfSessionId && !isStale(s, now))
+    .filter(s => !isForeign(s) && s.sessionId !== selfSessionId && !isStale(s, now))
     .flatMap(s => s.agents.flatMap(a => (a.waiting ? [{ sessionId: s.sessionId, name: s.name, kind: a.waiting.kind, detail: a.waiting.detail, at: a.waiting.at }] : [])))
     .sort((x, y) => x.at - y.at)
 }

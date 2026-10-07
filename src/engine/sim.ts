@@ -3,10 +3,10 @@
 // draw comes from the seeded rng, so one seed replays one office.
 import { TILE } from './types'
 import type {
-  Agent, Alert, Bubble, CatView, CharacterView, Dir, Effect, EffectKind, MonitorView, ParticleView, PlaneView,
+  Agent, Bubble, CatView, CharacterView, Dir, Effect, EffectKind, MonitorView, ParticleView, PlaneView,
   Pose, Scene, Seat, Snapshot, TilePos, Tone, Weather, World,
 } from './types'
-import { aggregateStats, alertsFor, isStale, zeroStats } from './snapshots'
+import { aggregateStats, isStale, zeroStats } from './snapshots'
 import { createRng, hashString } from './rng'
 import { toolClass } from './truth'
 import { DIRS, findPath, isWalkable, open, posKey, tileAt, tileCenter, where } from './world'
@@ -189,7 +189,6 @@ export function createSim(world: World, seed: number): Sim {
     flashIn: 0,
     flashLeft: 0,
     whiteboard: zeroStats(''),
-    alerts: [] as Alert[],
     doorHold: 0,
     cat: {
       x: catPx.x, y: catPx.y, col: catStart.col, row: catStart.row, path: [], progress: 0, dir: 'right', replan: false,
@@ -566,7 +565,6 @@ export function createSim(world: World, seed: number): Sim {
     st.placeNext = false
     st.hour = input.localHour
     st.whiteboard = aggregateStats(input.snapshots, input.day)
-    st.alerts = alertsFor(input.snapshots, input.selfSessionId, input.now)
     updateWeather(input)
     const entries = entriesOf(input.snapshots)
     const known = new Set(entries.map(e => e.key))
@@ -790,7 +788,6 @@ export function createSim(world: World, seed: number): Sim {
     sky: { hour: st.hour, weather: st.weather, flash: st.flashLeft > 0 },
     whiteboard: st.whiteboard,
     focus: focusOf(),
-    alerts: st.alerts,
     time: st.time,
   })
 

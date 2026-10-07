@@ -130,7 +130,6 @@ export type Scene = {
   readonly sky: SkyView
   readonly whiteboard: Stats
   readonly focus: { readonly x: number; readonly y: number } | null
-  readonly alerts: readonly Alert[]
   readonly time: number                  // seconds since the sim started
 }
 

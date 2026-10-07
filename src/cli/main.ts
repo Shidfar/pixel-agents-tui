@@ -240,9 +240,11 @@ function readSize(): { readonly cols: number; readonly rows: number } {
   return { cols: Math.max(1, s.cols), rows: Math.max(2, s.rows) }
 }
 
-function statusBar(snaps: readonly Snapshot[], waiting: number, now: number, cols: number, row: number): string {
+function statusBar(snaps: readonly Snapshot[], now: number, cols: number, row: number): string {
   const live = snaps.filter(s => !isStale(s, now))
   const agents = live.flatMap(s => s.agents).filter(a => a.doneAt === undefined).length
+  // alertsFor skips other accounts' sessions: only your own folder (or the demo) can make a wait count.
+  const waiting = alertsFor(snaps, null, now).length
   const text = ` pixel-agents │ ${live.length} sessions · ${agents} agents · ${waiting} waiting │ q quit  t theme  z zoom  l labels  n effects  d demo`
   return `\x1b[${row};1H${BAR_COLORS}${text.padEnd(cols).slice(0, cols)}`
 }
@@ -256,17 +258,15 @@ function frame(): void {
   const dt = app.last === null ? 0 : Math.min(MAX_DT, (now - app.last) / 1000)
   app.last = now
   const day = dayOf(now)
-  // Only your own folder (or the demo) can make `waiting` count; another account's wait never does.
-  const own = [...app.files.values()].map(f => f.snap)
   // Demo stands in for the real sessions while it is on, as in the mod.
-  const snaps = app.demoT0 === null ? [...own, ...[...app.foreign.values()].map(f => f.snap)] : demoSnapshots(now, app.demoT0, day)
+  const snaps = app.demoT0 === null ? [...app.files.values(), ...app.foreign.values()].map(f => f.snap) : demoSnapshots(now, app.demoT0, day)
   app.sim.sync({ snapshots: snaps, selfSessionId: null, now, localHour: hourOf(now), day })
   app.sim.step(dt)
   const scene = app.sim.scene()
   const cam = updateCamera(app.cam, app.world, scene, { cols, rows: rows - 1 }, app.prefs.camera, dt)
   app.cam = cam
   const cells = toCells(app.world, scene, app.prefs, { ...cam, x: cam.x + app.pan.x, y: cam.y + app.pan.y }, cols, rows - 1)
-  process.stdout.write(cellsToAnsi(cells, app.prev) + statusBar(snaps, alertsFor(app.demoT0 === null ? own : snaps, null, now).length, now, cols, rows))
+  process.stdout.write(cellsToAnsi(cells, app.prev) + statusBar(snaps, now, cols, rows))
   app.prev = cells
   app.frames += 1
   if (args.frames !== null && app.frames >= args.frames) quit(0)
