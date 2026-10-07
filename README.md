@@ -251,6 +251,7 @@ The code is laid out like this:
 ```
 hooks/register.ts      the only file that touches Claude Code's hook API
 src/engine/            the pure engine: truth reducer, world, simulation, renderer, art
+src/shell/             what both shells, the mod and the binary, share: the day, the hour, the frame-time cap
 src/cli/main.ts        the binary
 tests/                 engine and mod tests, plus the binary's smoke test
 tools/shot/            screenshot tooling
