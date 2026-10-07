@@ -75,6 +75,9 @@ function parseArgs(argv: readonly string[]): Args {
 }
 
 const args = parseArgs(process.argv.slice(2))
+const selfAccount = accountOf(homedir())
+
+type Kept = Map<string, { readonly stamp: string; readonly snap: Snapshot }>
 
 type AppState = {
   readonly world: ReturnType<typeof defaultWorld>
@@ -84,10 +87,11 @@ type AppState = {
   pan: { readonly x: number; readonly y: number }   // added to the camera at x1/x2, cleared by `z`
   prev: CellFrame | null
   demoT0: number | null
-  files: Map<string, { readonly stamp: string; readonly snap: Snapshot }>   // by file name: the last good copy
-  foreign: Map<string, { readonly stamp: string; readonly snap: Snapshot }>   // by `account/file name`; --shared only
+  files: Kept     // by file name
+  foreign: Kept   // by `account/file name`; --shared only
   dirty: boolean
   scannedAt: number
+  foreignAt: number
   last: number | null
   frames: number
   timer: ReturnType<typeof setInterval> | null
@@ -109,6 +113,7 @@ const app: AppState = {
   foreign: new Map(),
   dirty: true,
   scannedAt: 0,
+  foreignAt: 0,
   last: null,
   frames: 0,
   timer: null,
@@ -137,35 +142,51 @@ function quit(code: number, err?: unknown): void {
 
 // ── State folder ───────────────────────────────────────────────────────────
 
-function readOne(name: string, now: number): void {
-  const path = join(args.dir, name)
-  try {
-    const st = statSync(path)
-    if (now - st.mtimeMs > REAP_MS) {
-      unlinkSync(path)
-      app.files.delete(name)
-      return
+type FileEntry = { readonly key: string; readonly name: string; readonly path: string; readonly size: number; readonly mtimeMs: number }
+
+// Keep the last good copy of each file: drop what is gone, skip what has not changed, and when a read or
+// parse fails (a torn write, a file gone mid-scan) leave the old copy. A miss leaves the stamp unset, so
+// the next rescan tries again.
+function refresh<E extends FileEntry>(kept: Kept, entries: readonly E[], load: (e: E) => Snapshot | null): void {
+  const present = new Set(entries.map(e => e.key))
+  for (const key of [...kept.keys()]) if (!present.has(key)) kept.delete(key)
+  for (const e of entries) {
+    const stamp = `${e.mtimeMs}:${e.size}`
+    if (kept.get(e.key)?.stamp === stamp) continue
+    try {
+      const snap = load(e)
+      if (snap !== null) kept.set(e.key, { stamp, snap })
+    } catch {
+      // unreadable mid-scan: keep the last good copy
     }
-    const stamp = `${st.mtimeMs}:${st.size}`
-    if (app.files.get(name)?.stamp === stamp) return
-    // A torn write is a miss: the stamp stays unset, so the next rescan tries again.
-    const snap = parseStateFile(name, readFileSync(path, 'utf8'))
-    if (snap !== null) app.files.set(name, { stamp, snap })
-  } catch {
-    // vanished or unreadable mid-scan: keep the last good copy
   }
+}
+
+// The state files in --dir. One an hour old is deleted here, and the folder may be one the user chose,
+// so only state-file names are ever touched.
+function ownEntries(now: number): FileEntry[] {
+  const names = (() => {
+    try { return readdirSync(args.dir).filter(isStateFile) } catch { return [] }   // a missing folder is zero sessions
+  })()
+  return names.flatMap(name => {
+    const path = join(args.dir, name)
+    try {
+      const st = statSync(path)
+      if (now - st.mtimeMs > REAP_MS) {
+        unlinkSync(path)
+        return []
+      }
+      return [{ key: name, name, path, size: st.size, mtimeMs: st.mtimeMs }]
+    } catch {
+      return []   // vanished mid-scan
+    }
+  })
 }
 
 function rescan(now: number): void {
   app.dirty = false
   app.scannedAt = now
-  const names = (() => {
-    try { return readdirSync(args.dir).filter(isStateFile) } catch { return [] }   // a missing folder is zero sessions
-  })()
-  const present = new Set(names)
-  for (const name of [...app.files.keys()]) if (!present.has(name)) app.files.delete(name)
-  for (const name of names) readOne(name, now)
-  if (args.shared) rescanForeign(now)
+  refresh(app.files, ownEntries(now), e => parseStateFile(e.name, readFileSync(e.path, 'utf8')))
 }
 
 // Other accounts' folders are read the same way but trusted less, and never written or deleted.
@@ -188,27 +209,15 @@ function realEntries(dir: string, keep: (st: Stats) => boolean): { readonly name
 // ponytail: a folder swapped for a link, or a file grown, between the lstat and the read gets through;
 // O_NOFOLLOW only guards the last path component. Upgrade: openat and fstat on the descriptor.
 function rescanForeign(now: number): void {
-  const self = accountOf(homedir())
+  app.foreignAt = now
   const candidates = realEntries(args.sharedRoot, st => st.isDirectory()).flatMap(({ name: folder }) => {
-    const account = foreignAccount(folder, self)
+    const account = foreignAccount(folder, selfAccount)
     const sessions = join(args.sharedRoot, folder, 'sessions')
     if (account === null || !lstatOrNull(sessions)?.isDirectory()) return []
     return realEntries(sessions, st => st.isFile()).map(({ name, st }) => ({ account, name, path: join(sessions, name), size: st.size, mtimeMs: st.mtimeMs }))
   })
-  const picked = pickForeign(candidates, now)
-  const present = new Set(picked.map(c => `${c.account}/${c.name}`))
-  for (const key of [...app.foreign.keys()]) if (!present.has(key)) app.foreign.delete(key)
-  for (const c of picked) {
-    const key = `${c.account}/${c.name}`
-    const stamp = `${c.mtimeMs}:${c.size}`
-    if (app.foreign.get(key)?.stamp === stamp) continue
-    try {
-      const snap = fromShared(readFileSync(c.path, { encoding: 'utf8', flag: constants.O_RDONLY | constants.O_NOFOLLOW }), c.name, c.account)
-      if (snap !== null) app.foreign.set(key, { stamp, snap })
-    } catch {
-      // vanished, a link, or unreadable mid-scan: keep the last good copy
-    }
-  }
+  const entries = pickForeign(candidates, now).map(c => ({ ...c, key: `${c.account}/${c.name}` }))
+  refresh(app.foreign, entries, e => fromShared(readFileSync(e.path, { encoding: 'utf8', flag: constants.O_RDONLY | constants.O_NOFOLLOW }), e.name, e.account))
 }
 
 // A missing folder makes watch throw; the 2 s rescan covers it.
@@ -240,6 +249,8 @@ function statusBar(snaps: readonly Snapshot[], waiting: number, now: number, col
 function frame(): void {
   const now = Date.now()
   if (app.dirty || now - app.scannedAt >= RESCAN_MS) rescan(now)
+  // The own folder's watcher does not see other accounts' folders, so they are rescanned on the clock alone.
+  if (args.shared && now - app.foreignAt >= RESCAN_MS) rescanForeign(now)
   const { cols, rows } = readSize()
   const dt = app.last === null ? 0 : Math.min(MAX_DT, (now - app.last) / 1000)
   app.last = now
