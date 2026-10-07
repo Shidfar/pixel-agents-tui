@@ -65,6 +65,8 @@ export type TruthEvent =
   | { readonly type: 'context'; readonly percent: number | null; readonly now: number }
   | { readonly type: 'end'; readonly now: number }
 export type TruthContext = { readonly day: string }   // local 'YYYY-MM-DD', computed by the shell
+// A TruthEvent before the shell's clock stamps it.
+export type Bare = TruthEvent extends infer E ? (E extends { readonly now: number } ? Omit<E, 'now'> : never) : never
 
 // ── World ──────────────────────────────────────────────────────────
 export const TILE = 16
@@ -75,8 +77,7 @@ export type Tile =
   | 'desk' | 'computer' | 'bookshelf' | 'plant' | 'chair' | 'rug' | 'counter' | 'appliance' | 'door'
   | 'couch' | 'tv' | 'coffeeTable' | 'gameConsole'
 export type TilePos = { readonly col: number; readonly row: number }
-export type Zone = 'work' | 'kitchen' | 'playroom'
-export type Seat = { readonly id: string; readonly col: number; readonly row: number; readonly facing: Dir; readonly zone: Zone; readonly monitor?: TilePos }
+export type Seat = { readonly id: string; readonly col: number; readonly row: number; readonly facing: Dir; readonly monitor?: TilePos }
 export type World = {
   readonly cols: number
   readonly rows: number
@@ -107,15 +108,14 @@ export type CharacterView = {
   readonly frame: number
   readonly palette: number               // 0..5, CHAR_PALETTES index
   readonly label: string
-  readonly kind: AgentKind
   readonly isSelf: boolean               // the viewer's own main agent
   readonly bubble?: Bubble
   readonly bob: number                   // px, vertical, permission bob; 0 normally
 }
 export type ParticleView = { readonly x: number; readonly y: number; readonly color: number; readonly size: 1 | 2 | 3 }
-export type MonitorView = { readonly col: number; readonly row: number; readonly mode: 'code' | 'term' | 'off'; readonly phase: number }
+export type MonitorView = { readonly col: number; readonly row: number; readonly mode: 'code' | 'term' | 'off' }
 export type Weather = 'clear' | 'clouds' | 'rain' | 'storm' | 'lightning'
-export type SkyView = { readonly hour: number; readonly weather: Weather; readonly flash: boolean; readonly phase: number }
+export type SkyView = { readonly hour: number; readonly weather: Weather; readonly flash: boolean }
 export type CatView = { readonly x: number; readonly y: number; readonly dir: Dir; readonly pose: 'walk' | 'sit' | 'sleep'; readonly frame: number }
 export type PlaneView = { readonly x: number; readonly y: number; readonly dir: Dir }
 export type Alert = { readonly sessionId: string; readonly name: string; readonly kind: 'permission' | 'question'; readonly detail: string; readonly at: number }

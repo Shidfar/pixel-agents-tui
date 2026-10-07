@@ -1,4 +1,4 @@
-// world.ts — the one built-in office: layout, seats, zones, BFS paths.
+// world.ts — the one built-in office: layout, seats, BFS paths.
 // Const data plus pure functions; no state, no I/O.
 import { TILE } from './types'
 import type { Seat, Tile, TilePos, World } from './types'
@@ -33,31 +33,31 @@ const buildTiles = (): Tiles => {
 
 // Work seats first, nearest the top-left first; the kitchen standing spots last.
 const SEATS: readonly Seat[] = [
-  { id: 'w1', col: 3, row: 3, facing: 'up', zone: 'work', monitor: { col: 4, row: 2 } },
-  { id: 'w2', col: 6, row: 3, facing: 'up', zone: 'work', monitor: { col: 7, row: 2 } },
-  { id: 'w3', col: 9, row: 3, facing: 'up', zone: 'work', monitor: { col: 10, row: 2 } },
-  { id: 'w4', col: 3, row: 6, facing: 'up', zone: 'work', monitor: { col: 4, row: 5 } },
-  { id: 'w5', col: 6, row: 6, facing: 'up', zone: 'work', monitor: { col: 7, row: 5 } },
-  { id: 'w6', col: 9, row: 6, facing: 'up', zone: 'work', monitor: { col: 10, row: 5 } },
-  { id: 'w7', col: 3, row: 9, facing: 'up', zone: 'work', monitor: { col: 4, row: 8 } },
-  { id: 'w8', col: 6, row: 9, facing: 'up', zone: 'work', monitor: { col: 7, row: 8 } },
-  { id: 'w9', col: 9, row: 9, facing: 'up', zone: 'work', monitor: { col: 10, row: 8 } },
-  { id: 'k1', col: 16, row: 3, facing: 'up', zone: 'kitchen' },
-  { id: 'k2', col: 18, row: 3, facing: 'up', zone: 'kitchen' },
+  { id: 'w1', col: 3, row: 3, facing: 'up', monitor: { col: 4, row: 2 } },
+  { id: 'w2', col: 6, row: 3, facing: 'up', monitor: { col: 7, row: 2 } },
+  { id: 'w3', col: 9, row: 3, facing: 'up', monitor: { col: 10, row: 2 } },
+  { id: 'w4', col: 3, row: 6, facing: 'up', monitor: { col: 4, row: 5 } },
+  { id: 'w5', col: 6, row: 6, facing: 'up', monitor: { col: 7, row: 5 } },
+  { id: 'w6', col: 9, row: 6, facing: 'up', monitor: { col: 10, row: 5 } },
+  { id: 'w7', col: 3, row: 9, facing: 'up', monitor: { col: 4, row: 8 } },
+  { id: 'w8', col: 6, row: 9, facing: 'up', monitor: { col: 7, row: 8 } },
+  { id: 'w9', col: 9, row: 9, facing: 'up', monitor: { col: 10, row: 8 } },
+  { id: 'k1', col: 16, row: 3, facing: 'up' },
+  { id: 'k2', col: 18, row: 3, facing: 'up' },
 ]
 
 // Break spots, not work seats: idle agents sit here facing the TV.
 const COUCHES: readonly Seat[] = [
-  { id: 'p1', col: 14, row: 9, facing: 'up', zone: 'playroom' },
-  { id: 'p2', col: 15, row: 9, facing: 'up', zone: 'playroom' },
-  { id: 'p3', col: 18, row: 9, facing: 'up', zone: 'playroom' },
-  { id: 'p4', col: 19, row: 9, facing: 'up', zone: 'playroom' },
+  { id: 'p1', col: 14, row: 9, facing: 'up' },
+  { id: 'p2', col: 15, row: 9, facing: 'up' },
+  { id: 'p3', col: 18, row: 9, facing: 'up' },
+  { id: 'p4', col: 19, row: 9, facing: 'up' },
 ]
 
 const WHITEBOARD_SPOT: TilePos = { col: 15, row: 6 }
 
 // Neighbor order matters: it fixes which of several equal-length paths BFS returns.
-const DIRS: readonly TilePos[] = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]
+export const DIRS: readonly TilePos[] = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]
 
 const WALKABLE = new Set<Tile>(['floor1', 'floor2', 'floor3', 'floor4', 'floor5', 'floor6', 'floor7', 'chair', 'rug', 'door', 'couch'])
 const WALL_LIKE = new Set<Tile>(['wall', 'window', 'whiteboard'])
@@ -74,13 +74,13 @@ const at = (tiles: Tiles, p: TilePos): Tile | undefined => tiles[p.row]?.[p.col]
 
 const NOT_BLOCKED: ReadonlySet<string> = new Set()
 
-const open = (tiles: Tiles, p: TilePos, blocked: ReadonlySet<string>): boolean => {
+export const open = (tiles: Tiles, p: TilePos, blocked: ReadonlySet<string>): boolean => {
   const t = at(tiles, p)
   return t !== undefined && isWalkable(t) && !blocked.has(posKey(p))
 }
 
 // Every tile for which `is` holds, row by row, left to right.
-const where = (tiles: Tiles, is: (t: Tile) => boolean): TilePos[] =>
+export const where = (tiles: Tiles, is: (t: Tile) => boolean): TilePos[] =>
   tiles.flatMap((r, row) => r.flatMap((t, col) => (is(t) ? [{ col, row }] : [])))
 
 // Walkable tiles next to a tile of the wanted kind, each listed once.
@@ -153,8 +153,4 @@ export function wallMask(w: World, col: number, row: number): number {
 
 export function tileCenter(p: TilePos): { readonly x: number; readonly y: number } {
   return { x: p.col * TILE + TILE / 2, y: p.row * TILE + TILE / 2 }
-}
-
-export function nextFreeSeat(w: World, takenSeatIds: ReadonlySet<string>): Seat | null {
-  return w.seats.find(s => !takenSeatIds.has(s.id)) ?? null
 }

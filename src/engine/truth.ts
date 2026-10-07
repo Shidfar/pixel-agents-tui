@@ -1,6 +1,6 @@
 // The truth model: Claude Code events in, one session Snapshot out. Pure: the shell passes the
 // clock and the local day in, and nothing here touches its input.
-import { DONE_KEEP_MS, sanitizeText } from './snapshots'
+import { DONE_KEEP_MS, lastSegment, sanitizeText, zeroStats } from './snapshots'
 import type { Activity, Agent, EffectKind, InFlight, Json, Snapshot, Stats, ToolClass, TruthContext, TruthEvent, Waiting } from './types'
 
 export const EFFECT_RING = 32
@@ -13,8 +13,6 @@ const TEST_RE = /\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\bgo\s+test\b|\bpytest\
 const COMMIT_RE = /\bgit\s+commit\b/
 const PUSH_RE = /\bgit\s+push\b/
 const MCP_RE = /^mcp__(.+?)__(.+)$/
-
-const zeroStats = (day: string): Stats => ({ day, tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 })
 
 // ── Tools ──────────────────────────────────────────────────────────
 
@@ -29,7 +27,6 @@ export function toolClass(tool: string): ToolClass {
 // Tool input is opaque JSON from another process: read only what a label needs, and only if it is a string.
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 const firstOf = (...vs: readonly unknown[]): string => vs.map(str).find(s => s !== '') ?? ''
-const lastSegment = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? ''
 const hostOf = (url: string): string => {
   try {
     return new URL(url).hostname

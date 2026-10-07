@@ -11,12 +11,12 @@ const world = defaultWorld()
 const stats = { day: '2026-10-02', tools: 312, edits: 41, commits: 3, permits: 5, errors: 1 }
 const scene = (over: Partial<Scene> = {}): Scene => ({
   characters: [], particles: [], planes: [], cat: { x: 200, y: 120, dir: 'right', pose: 'sit', frame: 0 },
-  monitors: [], doorOpen: false, tvOn: true, sky: { hour: 12, weather: 'clear', flash: false, phase: 0 },
+  monitors: [], doorOpen: false, tvOn: true, sky: { hour: 12, weather: 'clear', flash: false },
   whiteboard: stats, focus: null, alerts: [], time: 0, ...over,
 })
 const person = (over: Partial<CharacterView> = {}): CharacterView => {
   const s = tileCenter(world.seats[0]!)
-  return { key: 's1/main', x: s.x, y: s.y, dir: 'up', pose: 'type', frame: 0, palette: 0, label: 'Alpha', kind: 'main', isSelf: false, bob: 0, ...over }
+  return { key: 's1/main', x: s.x, y: s.y, dir: 'up', pose: 'type', frame: 0, palette: 0, label: 'Alpha', isSelf: false, bob: 0, ...over }
 }
 const ALLOWED = new Set([0x2580, 0x2026, 0x2713, 0x2717, 0x2605, ...Array.from({ length: 95 }, (_, i) => 0x20 + i)])
 const rowsText = (f: ReturnType<typeof toCells>) => Array.from({ length: f.rows }, (_, r) => String.fromCodePoint(...Array.from({ length: f.cols }, (_, c) => f.cells[(r * f.cols + c) * 3]!)))
@@ -36,7 +36,7 @@ test('busy fit frame stays under the color-pair limit', async () => {
   const crowd = Array.from({ length: 30 }, (_, i) => person({ key: 'k' + i, x: 24 + (i * 37) % 320, y: 40 + (i * 53) % 160, palette: i % 6, pose: (['walk', 'type', 'read', 'stand'] as const)[i % 4], bubble: { text: 'Editing x' + i, tone: (['alert', 'ask', 'info', 'ok', 'bad'] as const)[i % 5]! } }))
   const sparks = Array.from({ length: 200 }, (_, i) => ({ x: (i * 13) % 352, y: (i * 7) % 208, color: [0xff5e5e, 0xffd24a, 0x5ec8ff, 0x7cff6b, 0xd07cff][i % 5]!, size: ((i % 3) + 1) as 1 | 2 | 3 }))
   for (const hour of [3, 7, 12, 19]) for (const [cols, rows] of [[128, 42], [89, 41], [62, 31]] as const) {
-    const f = frame(scene({ characters: crowd, particles: sparks, sky: { hour, weather: 'lightning', flash: hour === 3, phase: 1 } }), cols, rows)
+    const f = frame(scene({ characters: crowd, particles: sparks, sky: { hour, weather: 'lightning', flash: hour === 3 }, time: 1 }), cols, rows)
     expect(f.pairs <= MAX_PAIRS).toBe(true)
   }
 })
@@ -66,7 +66,7 @@ test('noon default theme paints floors in exact art colors', async () => {
 })
 
 test('night is darker than noon', async () => {
-  const lum = (hour: number) => { const f = frame(scene({ sky: { hour, weather: 'clear', flash: false, phase: 0 } }), 89, 41); return Array.from({ length: f.cols * f.rows }, (_, i) => f.cells[i * 3 + 1]!).reduce((a, c) => a + ((c >> 16) & 255) + ((c >> 8) & 255) + (c & 255), 0) }
+  const lum = (hour: number) => { const f = frame(scene({ sky: { hour, weather: 'clear', flash: false } }), 89, 41); return Array.from({ length: f.cols * f.rows }, (_, i) => f.cells[i * 3 + 1]!).reduce((a, c) => a + ((c >> 16) & 255) + ((c >> 8) & 255) + (c & 255), 0) }
   expect(lum(23) < lum(12) * 0.8).toBe(true)
 })
 
@@ -166,7 +166,7 @@ test('whiteboard totals show on the board when it is wide enough', async () => {
 })
 
 test('every painted color comes from the frame palette, in every theme and light', async () => {
-  const sc = (hour: number) => scene({ characters: [person(), person({ key: 'b', x: 100, y: 100, pose: 'read' })], monitors: [{ col: 4, row: 2, mode: 'code', phase: 1 }], sky: { hour, weather: 'storm', flash: false, phase: 2 } })
+  const sc = (hour: number) => scene({ characters: [person(), person({ key: 'b', x: 100, y: 100, pose: 'read' })], monitors: [{ col: 4, row: 2, mode: 'code' }], sky: { hour, weather: 'storm', flash: false }, time: 2 })
   for (const theme of ['default', 'warm', 'cool', 'dark', 'light'] as const) for (const hour of [2, 7, 12, 19]) {
     const f = frame(sc(hour), 89, 41, { ...DEFAULT_PREFS, theme })
     const colors = new Set(framePalette(theme, hour).colors)

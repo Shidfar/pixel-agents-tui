@@ -10,7 +10,7 @@ const OUTLINE = 0x111122
 export const isOpaque = (px: number): boolean => px <= 0xffffff
 
 const hex = (h: string): number => parseInt(h.slice(1), 16)
-const PALETTE: readonly number[] = TILE_PALETTE.map(hex)
+export const PALETTE: readonly number[] = TILE_PALETTE.map(hex)
 
 const memo = <K, V>(cache: Map<K, V>, key: K, make: () => V): V => {
   const hit = cache.get(key)
@@ -30,7 +30,7 @@ const fromGrid = (rows: readonly string[], key: Readonly<Record<string, number>>
   Uint32Array.from(rows.join(''), ch => (ch === '.' ? CLEAR : key[ch]!))
 
 // Converted tiles: two hex chars per pixel into TILE_PALETTE, '..' transparent.
-const fromHex = (rows: readonly string[]): Uint32Array =>
+export const fromHex = (rows: readonly string[]): Uint32Array =>
   Uint32Array.from({ length: 256 }, (_, i) => {
     const p = rows[i >> 4]!.slice((i & 15) * 2, (i & 15) * 2 + 2)
     return p === '..' ? CLEAR : PALETTE[parseInt(p, 16)]!
@@ -145,7 +145,7 @@ const WALK_ORDER = [1, 2, 3, 2] as const
 
 const KEY_SLOT = { H: 'hair', K: 'skin', S: 'shirt', P: 'pants', O: 'shoes' } as const
 
-const resolve = (rows: readonly string[], pal: (typeof CHAR_PALETTES)[number]): Uint32Array =>
+export const resolve = (rows: readonly string[], pal: (typeof CHAR_PALETTES)[number]): Uint32Array =>
   Uint32Array.from(rows.join(''), ch => (ch === '.' ? CLEAR : ch === 'E' ? 0xffffff : hex(pal[KEY_SLOT[ch as keyof typeof KEY_SLOT]])))
 
 // Grow the silhouette by one pixel inside the canvas, twice: a 1 px ring is sampled only now
@@ -220,13 +220,16 @@ const colorCache: { all: readonly number[] | null } = { all: null }
 
 export function artColors(): readonly number[] {
   if (colorCache.all) return colorCache.all
-  const all = [
-    ...TILE_NAMES.flatMap(n => [...tileSprite(n)]),
-    ...Array.from({ length: 16 }, (_, m) => [...wallSprite(m)]).flat(),
-    ...CHAR_PALETTES.flatMap((_, p) => POSES.flatMap(pose => DIRS.flatMap(dir => Array.from({ length: 4 }, (_, f) => [...charSprite(p, pose, dir, f).px]).flat()))),
-    ...(['walk', 'sit', 'sleep'] as const).flatMap(pose => [0, 1].flatMap(f => [...catSprite(pose, 'right', f).px])),
-    ...planeSprite('right').px,
+  const sprites = [
+    ...TILE_NAMES.map(n => tileSprite(n)),
+    ...Array.from({ length: 16 }, (_, m) => wallSprite(m)),
+    ...CHAR_PALETTES.flatMap((_, p) => POSES.flatMap(pose => DIRS.flatMap(dir => Array.from({ length: 4 }, (_, f) => charSprite(p, pose, dir, f).px)))),
+    ...(['walk', 'sit', 'sleep'] as const).flatMap(pose => [0, 1].map(f => catSprite(pose, 'right', f).px)),
+    planeSprite('right').px,
   ]
-  colorCache.all = [...new Set(all.filter(isOpaque))].sort((a, b) => a - b)
+  // Straight into the Set: spreading ~150K pixels into arrays first took twice as long
+  const colors = new Set<number>()
+  sprites.forEach(px => px.forEach(c => { if (isOpaque(c)) colors.add(c) }))
+  colorCache.all = [...colors].sort((a, b) => a - b)
   return colorCache.all
 }

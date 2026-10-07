@@ -6,16 +6,12 @@ import { toCells, updateCamera } from '../src/engine/render'
 import { createRng, type Rng } from '../src/engine/rng'
 import { createSim } from '../src/engine/sim'
 import { aggregateStats, alertsFor, parseSnapshot } from '../src/engine/snapshots'
-import { initialSnapshot, reduce } from '../src/engine/truth'
-import { DEFAULT_PREFS, type Activity, type AgentKind, type EffectKind, type Snapshot, type TruthEvent } from '../src/engine/types'
+import { reduce } from '../src/engine/truth'
+import { DEFAULT_PREFS, type Activity, type AgentKind, type Bare, type EffectKind, type Snapshot, type TruthEvent } from '../src/engine/types'
 import { defaultWorld } from '../src/engine/world'
-
-type Bare = TruthEvent extends infer E ? (E extends { readonly now: number } ? Omit<E, 'now'> : never) : never
+import { at, DAY, freshSnapshot, T0 } from './fixtures'
 
 const world = defaultWorld()
-const DAY = '2026-10-02'
-const T0 = 1_000_000
-const at = (sec: number): Snapshot[] => demoSnapshots(T0 + sec * 1000, T0, DAY)
 // Chosen to straddle the demo's spawns, messages, commits, failures and departures, so a mutated
 // snapshot meets a sim that has already seen the one before it (effects only play on a later sync).
 const SECONDS = [0, 5, 11, 16, 24, 36, 41, 45, 50, 56]
@@ -103,7 +99,7 @@ test('fuzz: a mutated state file is rejected, or every viewer path runs without 
 
 // ── Named regressions ──────────────────────────────────────────────
 
-const base = initialSnapshot({ sessionId: 's1', name: 'repo', cwd: '/w/repo', now: 1000, day: DAY })
+const base = freshSnapshot()
 const main = base.agents[0]!
 const parseWith = (over: Record<string, unknown>) => parseSnapshot(JSON.stringify({ ...base, ...over }))
 const parseAgent = (over: Record<string, unknown>) => parseWith({ agents: [{ ...main, ...over }] })

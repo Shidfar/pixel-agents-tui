@@ -1,13 +1,12 @@
 // A scripted crew for `/office demo` and the binary's --demo: four fake sessions replaying one
 // 60 s script of events through the real reducer, so the demo can never drift from the truth model.
 import { initialSnapshot, reduce } from './truth'
-import type { Json, Snapshot, TruthEvent } from './types'
+import type { Bare, Json, Snapshot } from './types'
 
 const CYCLE_MS = 60_000
 // Effect ids restart each cycle; this offset keeps them increasing across cycles (a cycle adds far fewer).
 const IDS_PER_CYCLE = 1000
 
-type Bare = TruthEvent extends infer E ? (E extends { readonly now: number } ? Omit<E, 'now'> : never) : never
 type Step = { readonly at: number; readonly session: number; readonly ev: Bare }
 
 const SESSIONS = ['api-service', 'web-app', 'infra', 'docs'] as const

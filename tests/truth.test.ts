@@ -1,17 +1,17 @@
 import { expect, test } from 'claude-code/testing'
-import { activityOf, describeTool, initialSnapshot, prune, reduce, toolClass } from '../src/engine/truth'
+import { activityOf, describeTool, prune, reduce, toolClass } from '../src/engine/truth'
 import type { Snapshot, TruthEvent } from '../src/engine/types'
+import { freshSnapshot } from './fixtures'
 
 const ctx = { day: '2026-10-02' }
-const base = () => initialSnapshot({ sessionId: 's1', name: 'repo', cwd: '/w/repo', now: 1000, day: '2026-10-02' })
-const run = (evs: readonly TruthEvent[], s: Snapshot = base()) => evs.reduce((acc, ev) => reduce(acc, ev, ctx), s)
+const run = (evs: readonly TruthEvent[], s: Snapshot = freshSnapshot()) => evs.reduce((acc, ev) => reduce(acc, ev, ctx), s)
 const get = (s: Snapshot, id = 'main') => s.agents.find(a => a.id === id)!
 const kinds = (s: Snapshot) => s.effects.map(e => e.kind)
 const bash = (id: string, command: string, now: number): TruthEvent => ({ type: 'toolStart', toolUseId: id, tool: 'Bash', input: { command }, now })
 const bashEnd = (id: string, command: string, ok: boolean, now: number): TruthEvent => ({ type: 'toolEnd', toolUseId: id, tool: 'Bash', input: { command }, ok, now })
 
 test('a fresh session has one idle main agent named after the session', async () => {
-  const s = base()
+  const s = freshSnapshot()
   expect(s.agents.map(a => [a.id, a.kind, a.label, a.activity, a.turnActive])).toEqual([['main', 'main', 'repo', 'idle', false]])
   expect(s.stats).toEqual({ day: '2026-10-02', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 })
 })
@@ -177,7 +177,7 @@ const everyKind: readonly TruthEvent[] = [
 ]
 
 test('reduce never mutates its input, and every agent always matches activityOf', async () => {
-  const frozen = everyKind.reduce((acc, ev) => freeze(reduce(acc, ev, ctx)), freeze(base()))
+  const frozen = everyKind.reduce((acc, ev) => freeze(reduce(acc, ev, ctx)), freeze(freshSnapshot()))
   expect(frozen.endedAt).toBe(16)
   const states = everyKind.map((_, i) => run(everyKind.slice(0, i + 1)))
   expect(states.every(s => s.agents.every(a => a.activity === activityOf(a)))).toBe(true)

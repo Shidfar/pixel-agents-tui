@@ -9,7 +9,7 @@ import type { FramePalette, Tint } from './palette'
 import { sanitizeText } from './snapshots'
 import { TILE } from './types'
 import type { Camera, CameraMode, CellFrame, CharacterView, MonitorView, Prefs, RgbaFrame, Scene, ThemeName, Tile, Tone, World } from './types'
-import { tileCenter, wallMask } from './world'
+import { DIRS, tileAt, tileCenter, wallMask } from './world'
 
 export const MAX_PAIRS = 1000
 const REDUCED_COLORS = 31   // 31² = 961 pairs, whatever the frame holds
@@ -52,7 +52,6 @@ const scratch = {
   raw: new Uint32Array(0),
   xs: new Int32Array(0),
   xe: new Int32Array(0),
-  order: [] as CharacterView[],
   placed: [] as number[],
   pairKeys: new Int32Array(8192),
   pairStamp: new Uint32Array(4096),
@@ -83,11 +82,10 @@ const blit = (dst: Uint32Array, dw: number, dh: number, src: Uint32Array, sw: nu
 // Furniture sprites have see-through corners; they sit on a floor, not on the void.
 const FURNITURE: ReadonlySet<Tile> = new Set<Tile>(['desk', 'computer', 'bookshelf', 'plant', 'chair', 'counter', 'appliance', 'door', 'couch', 'tv', 'coffeeTable', 'gameConsole'])
 const GROUND: ReadonlySet<Tile> = new Set<Tile>(['floor1', 'floor2', 'floor3', 'floor4', 'floor5', 'floor6', 'floor7', 'rug'])
-const NEIGHBORS = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]   // up, down, left, right
 
-// The first neighbor that is floor or rug; floor1 when there is none.
+// The first neighbor (up, down, left, right) that is floor or rug; floor1 when there is none.
 const groundFor = (w: World, c: number, r: number): Tile =>
-  NEIGHBORS.map(d => w.tiles[r + d.row]?.[c + d.col]).find(t => t !== undefined && GROUND.has(t)) ?? 'floor1'
+  DIRS.map(d => tileAt(w, { col: c + d.col, row: r + d.row })).find(t => t !== undefined && GROUND.has(t)) ?? 'floor1'
 
 const buildLayer = (w: World): Layer => {
   const W = w.cols * TILE, H = w.rows * TILE
@@ -115,6 +113,11 @@ const layerFor = (w: World): Layer => {
 
 // ── Compose: the static layer plus everything that moves ───────────
 
+// A copy of the characters, back to front for painting or front to back for placing text
+// (a larger y is nearer). Equal depths keep their order.
+const byDepth = (chars: readonly CharacterView[], dir: 'back' | 'front'): CharacterView[] =>
+  [...chars].sort(dir === 'back' ? (a, b) => a.y - b.y : (a, b) => b.y - a.y)
+
 // A cheap stable hash for stars: no random, no state.
 const scatter = (x: number, y: number): number => (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) >>> 0
 
@@ -133,20 +136,20 @@ const inCloud = (x: number, y: number, n: number): boolean => {
 }
 
 // One pixel of window glass: sky, then stars at night, clouds, rain, and the lightning flash.
-const skyPixel = (x: number, y: number, top: number, bottom: number, night: boolean, sky: Scene['sky'], clouds: number, cloudColor: number): number => {
+const skyPixel = (x: number, y: number, top: number, bottom: number, night: boolean, sky: Scene['sky'], time: number, clouds: number, cloudColor: number): number => {
   if (sky.flash) return COLORS.flash
   const wet = sky.weather === 'rain' || sky.weather === 'storm' || sky.weather === 'lightning'
-  if (wet && (sky.weather !== 'rain' || x % 2 === 0) && (y + Math.floor(sky.phase * 14) + ((x * 5) % 8)) % 8 < 2) return COLORS.rain
+  if (wet && (sky.weather !== 'rain' || x % 2 === 0) && (y + Math.floor(time * 14) + ((x * 5) % 8)) % 8 < 2) return COLORS.rain
   if (clouds > 0 && inCloud(x, y, clouds)) return cloudColor
-  if (night && (sky.weather === 'clear' || sky.weather === 'clouds') && scatter(x, y) % 17 === 0 && (Math.floor(sky.phase * 2) + x) % 5 !== 0) return COLORS.star
+  if (night && (sky.weather === 'clear' || sky.weather === 'clouds') && scatter(x, y) % 17 === 0 && (Math.floor(time * 2) + x) % 5 !== 0) return COLORS.star
   return y % TILE < 7 ? top : bottom
 }
 
-const paintMonitor = (compose: Uint32Array, W: number, m: MonitorView): void => {
+const paintMonitor = (compose: Uint32Array, W: number, m: MonitorView, time: number): void => {
   const origin = m.row * TILE * W + m.col * TILE
   const bg = m.mode === 'code' ? COLORS.codeBg : COLORS.termBg
   for (const o of MONITOR_SCREEN) compose[origin + (o >> 4) * W + (o & 15)] = bg
-  const step = Math.floor(m.phase * 4)
+  const step = Math.floor(time * 4)
   for (const k of iota(3)) {
     const row = 1 + ((k * 3 + step) % 8)
     const len = 3 + ((k * 5 + step * 7) % 8)
@@ -174,8 +177,8 @@ const composeWorld = (w: World, scene: Scene, prefs: Prefs, layer: Layer): Uint3
   const [top, bottom] = skyColors(hour, scene.sky.weather)
   const night = isNight(hour)
   const [clouds, cloudColor] = CLOUDS[scene.sky.weather] ?? [0, 0]
-  for (const k of iota(clouds)) scratch.cloudX[k] = (k * 83 + Math.floor(scene.sky.phase * (2 + k) * 0.75)) % (W + 16) - 8
-  for (const at of layer.sky) out[at] = skyPixel(at % W, (at / W) | 0, top, bottom, night, scene.sky, clouds, cloudColor)
+  for (const k of iota(clouds)) scratch.cloudX[k] = (k * 83 + Math.floor(scene.time * (2 + k) * 0.75)) % (W + 16) - 8
+  for (const at of layer.sky) out[at] = skyPixel(at % W, (at / W) | 0, top, bottom, night, scene.sky, scene.time, clouds, cloudColor)
 
   if (scene.doorOpen) blit(out, W, H, tileSprite('door'), TILE, TILE, w.door.col * TILE, w.door.row * TILE)
 
@@ -193,12 +196,9 @@ const composeWorld = (w: World, scene: Scene, prefs: Prefs, layer: Layer): Uint3
     }))
   }
 
-  for (const m of scene.monitors) if (m.mode !== 'off') paintMonitor(out, W, m)
+  for (const m of scene.monitors) if (m.mode !== 'off') paintMonitor(out, W, m, scene.time)
 
-  scratch.order.length = 0
-  for (const c of scene.characters) scratch.order.push(c)
-  scratch.order.sort((a, b) => a.y - b.y)
-  for (const ch of scratch.order) {
+  for (const ch of byDepth(scene.characters, 'back')) {
     const s = charSprite(ch.palette, ch.pose, ch.dir, ch.frame)
     blit(out, W, H, s.px, s.w, s.h, Math.round(ch.x - 8), Math.round(ch.y - 24 + (ch.pose === 'type' ? 6 : 0) + ch.bob))
   }
@@ -399,6 +399,33 @@ const putText = (f: Surface, row: number, col: number, text: string, fg: number,
 
 const boardLine = (s: Scene['whiteboard']): string => sanitizeText(`T${s.tools} E${s.edits} C${s.commits}`, 40)
 
+// The whiteboard totals, the board's left and right edge, and the text's middle row; null with no board.
+const boardFor = (w: World, scene: Scene) => {
+  const b = w.whiteboard
+  return b.length === 0 ? null : { text: boardLine(scene.whiteboard), x0: b[0]!.col * TILE, x1: (b[b.length - 1]!.col + 1) * TILE, y: b[0]!.row * TILE + 7 }
+}
+
+// Where a text `width` wide starts to sit centered between x0 and x1; null when it does not fit.
+const centered = (x0: number, x1: number, width: number): number | null => (width <= x1 - x0 ? x0 + Math.floor((x1 - x0 - width) / 2) : null)
+
+// Where a sleeping cat's z floats; null when it is awake or labels are off.
+const catZ = (scene: Scene, prefs: Prefs): { readonly x: number; readonly y: number } | null =>
+  prefs.labels && scene.cat.pose === 'sleep' ? { x: scene.cat.x, y: scene.cat.y - 9 } : null
+
+type Tag = { readonly text: string; readonly fg: number; readonly bg: number }
+type Labeled = { readonly x: number; readonly y: number; readonly bubble?: Tag; readonly label?: Tag }
+
+// Front to back, so the nearest claims its space first: each character's bubble and label, if
+// shown. The text comes from other sessions' state files, so this is the one place it is
+// sanitized, before either backend draws it. (x, y) is the world point the label stands on.
+const labelsFor = (scene: Scene, prefs: Prefs): readonly Labeled[] =>
+  byDepth(scene.characters, 'front').map(ch => ({
+    x: ch.x,
+    y: ch.y - 26 + ch.bob,
+    bubble: ch.bubble && (ch.bubble.tone !== 'info' || prefs.labels) ? { ...TONES[ch.bubble.tone], text: sanitizeText(ch.bubble.text, BUBBLE_MAX) } : undefined,
+    label: prefs.labels && ch.label.length > 0 ? { text: `${ch.isSelf ? '★' : ''}${sanitizeText(ch.label, LABEL_MAX)}`, fg: ch.isSelf ? SELF_FG : LABEL.fg, bg: LABEL.bg } : undefined,
+  }))
+
 const overlaps = (placed: readonly number[], row: number, a: number, b: number): boolean =>
   placed.some((_, i) => i % 3 === 0 && placed[i] === row && a < placed[i + 2]! && b > placed[i + 1]!)
 
@@ -412,27 +439,21 @@ function overlayCells(f: Surface, w: World, scene: Scene, prefs: Prefs, cam: Cam
   const rowOf = (y: number) => Math.floor((y - cam.y) / s / 2)
 
   // whiteboard totals, when they fit across the board
-  const board = w.whiteboard
-  if (board.length > 0) {
-    const text = boardLine(scene.whiteboard)
-    const c0 = Math.ceil((board[0]!.col * TILE - cam.x) / s), c1 = Math.floor(((board[board.length - 1]!.col + 1) * TILE - cam.x) / s)
-    if (text.length <= c1 - c0) {
-      putText(f, rowOf(board[0]!.row * TILE + 7), c0 + Math.floor((c1 - c0 - text.length) / 2), text, snap(lightColor(BOARD_TEXT, lit.tint, lit.theme, 0)), snap(lightColor(BOARD_FACE, lit.tint, lit.theme, 0)))
-    }
+  const board = boardFor(w, scene)
+  if (board) {
+    const start = centered(Math.ceil((board.x0 - cam.x) / s), Math.floor((board.x1 - cam.x) / s), board.text.length)
+    if (start !== null) putText(f, rowOf(board.y), start, board.text, snap(lightColor(BOARD_TEXT, lit.tint, lit.theme, 0)), snap(lightColor(BOARD_FACE, lit.tint, lit.theme, 0)))
   }
 
   // a sleeping cat's z, over whatever is already behind it
-  if (prefs.labels && scene.cat.pose === 'sleep') {
-    const row = rowOf(scene.cat.y - 9) - 1, col = colOf(scene.cat.x)
+  const z = catZ(scene, prefs)
+  if (z) {
+    const row = rowOf(z.y) - 1, col = colOf(z.x)
     if (row >= 0 && row < f.rows && col >= 0 && col < f.cols) putText(f, row, col, 'z', DIM_Z, f.cells[(row * f.cols + col) * 3 + 2]!)
   }
 
   const placed = scratch.placed
   placed.length = 0
-  const front = scratch.order
-  front.length = 0
-  for (const c of scene.characters) front.push(c)
-  front.sort((a, b) => b.y - a.y)
 
   const place = (row: number, text: string, centerCol: number, fg: number, bg: number): void => {
     const a = centerCol - Math.floor(text.length / 2)
@@ -441,22 +462,20 @@ function overlayCells(f: Surface, w: World, scene: Scene, prefs: Prefs, cam: Cam
     placed.push(row, a, a + text.length)
   }
 
-  for (const ch of front) {
-    const col = colOf(ch.x), labelRow = rowOf(ch.y - 26 + ch.bob)
-    const showLabel = prefs.labels && ch.label.length > 0
-    const bubble = ch.bubble && (ch.bubble.tone !== 'info' || prefs.labels) ? ch.bubble : undefined
-    const bubbleText = bubble ? ` ${sanitizeText(bubble.text, BUBBLE_MAX)} ` : ''
-    const labelText = ` ${ch.isSelf ? '★' : ''}${sanitizeText(ch.label, LABEL_MAX)} `
+  for (const { x, y, bubble, label } of labelsFor(scene, prefs)) {
+    const col = colOf(x), labelRow = rowOf(y)
+    const bubbleText = bubble ? ` ${bubble.text} ` : ''
 
     // the bubble goes first; the label rides up with it, then clears anything left
-    const bubbleRow = showLabel ? labelRow - 1 : labelRow
+    const bubbleRow = label ? labelRow - 1 : labelRow
     const bubbleStart = col - Math.floor(bubbleText.length / 2)
     const lift = bubble ? shiftFor(placed, bubbleRow, bubbleStart, bubbleStart + bubbleText.length) : 0
-    if (bubble) place(bubbleRow - lift, bubbleText, col, TONES[bubble.tone].fg, TONES[bubble.tone].bg)
-    if (showLabel) {
+    if (bubble) place(bubbleRow - lift, bubbleText, col, bubble.fg, bubble.bg)
+    if (label) {
+      const labelText = ` ${label.text} `
       const start = col - Math.floor(labelText.length / 2)
       const own = shiftFor(placed, labelRow - lift, start, start + labelText.length)
-      place(labelRow - lift - own, labelText, col, ch.isSelf ? SELF_FG : LABEL.fg, LABEL.bg)
+      place(labelRow - lift - own, labelText, col, label.fg, label.bg)
     }
   }
 }
@@ -572,48 +591,41 @@ function overlayRgba(img: Pixels, w: World, scene: Scene, prefs: Prefs, cam: Cam
   const px = (x: number) => Math.round((x - cam.x) * sx), py = (y: number) => Math.round((y - cam.y) * sy)
   const pad = g, bh = (GLYPH_H + 2) * g
 
-  const board = w.whiteboard
-  if (board.length > 0) {
-    const text = boardLine(scene.whiteboard)
-    const x0 = px(board[0]!.col * TILE), x1 = px((board[board.length - 1]!.col + 1) * TILE)
-    if (textWidth(text.length, g) <= x1 - x0) drawText(img, x0 + Math.floor((x1 - x0 - textWidth(text.length, g)) / 2), py(board[0]!.row * TILE + 7) - Math.floor((GLYPH_H * g) / 2), text, lightColor(BOARD_TEXT, lit.tint, lit.theme, 0), g)
+  const board = boardFor(w, scene)
+  if (board) {
+    const start = centered(px(board.x0), px(board.x1), textWidth(board.text.length, g))
+    if (start !== null) drawText(img, start, py(board.y) - Math.floor((GLYPH_H * g) / 2), board.text, lightColor(BOARD_TEXT, lit.tint, lit.theme, 0), g)
   }
 
-  if (prefs.labels && scene.cat.pose === 'sleep') drawText(img, px(scene.cat.x) - Math.floor((GLYPH_W * g) / 2), py(scene.cat.y - 9) - (GLYPH_H + 2) * g, 'z', DIM_Z, g)
+  const z = catZ(scene, prefs)
+  if (z) drawText(img, px(z.x) - Math.floor((GLYPH_W * g) / 2), py(z.y) - (GLYPH_H + 2) * g, 'z', DIM_Z, g)
 
   const placed = scratch.placed
   placed.length = 0
-  const front = scratch.order
-  front.length = 0
-  for (const c of scene.characters) front.push(c)
-  front.sort((a, b) => b.y - a.y)
 
+  const boxW = (tag: Tag): number => textWidth(tag.text.length, g) + 2 * pad
   // a box shifts up by its own height, at most twice, to clear what is placed
-  const lift = (x0: number, y0: number, x1: number, y1: number): number =>
-    [0, 1, 2].find(k => !rectsHit(placed, x0, y0 - k * bh, x1, y1 - k * bh)) ?? 0
-  const box = (cx: number, bottom: number, text: string, fg: number, bg: number, up: number): void => {
-    const bw = textWidth(text.length, g) + 2 * pad
+  const lift = (cx: number, bottom: number, tag: Tag): number => {
+    const x0 = cx - Math.floor(boxW(tag) / 2)
+    return [0, 1, 2].find(k => !rectsHit(placed, x0, bottom - bh - k * bh, x0 + boxW(tag), bottom - k * bh)) ?? 0
+  }
+  const box = (cx: number, bottom: number, tag: Tag, up: number): void => {
+    const bw = boxW(tag)
     const x0 = cx - Math.floor(bw / 2), y0 = bottom - bh - up * bh
-    fillRect(img, x0, y0, bw, bh, bg)
-    drawText(img, x0 + pad, y0 + pad, text, fg, g)
+    fillRect(img, x0, y0, bw, bh, tag.bg)
+    drawText(img, x0 + pad, y0 + pad, tag.text, tag.fg, g)
     placed.push(x0, y0, x0 + bw, y0 + bh)
   }
 
-  for (const ch of front) {
-    const cx = px(ch.x), labelBottom = py(ch.y - 26 + ch.bob)
-    const showLabel = prefs.labels && ch.label.length > 0
-    const bubble = ch.bubble && (ch.bubble.tone !== 'info' || prefs.labels) ? ch.bubble : undefined
-    const labelText = `${ch.isSelf ? '★' : ''}${sanitizeText(ch.label, LABEL_MAX)}`
-    const bubbleText = bubble ? sanitizeText(bubble.text, BUBBLE_MAX) : ''
-
-    const bubbleBottom = showLabel ? labelBottom - bh - g : labelBottom
-    const bw = textWidth(bubbleText.length, g) + 2 * pad, lw = textWidth(labelText.length, g) + 2 * pad
-    const up = bubble ? lift(cx - Math.floor(bw / 2), bubbleBottom - bh, cx - Math.floor(bw / 2) + bw, bubbleBottom) : 0
-    if (bubble) box(cx, bubbleBottom, bubbleText, TONES[bubble.tone].fg, TONES[bubble.tone].bg, up)
-    if (showLabel) {
+  for (const { x, y, bubble, label } of labelsFor(scene, prefs)) {
+    const cx = px(x), labelBottom = py(y)
+    // the bubble goes first; the label rides up with it, then clears anything left
+    const bubbleBottom = label ? labelBottom - bh - g : labelBottom
+    const up = bubble ? lift(cx, bubbleBottom, bubble) : 0
+    if (bubble) box(cx, bubbleBottom, bubble, up)
+    if (label) {
       const base = labelBottom - up * bh
-      const own = lift(cx - Math.floor(lw / 2), base - bh, cx - Math.floor(lw / 2) + lw, base)
-      box(cx, base, labelText, ch.isSelf ? SELF_FG : LABEL.fg, LABEL.bg, own)
+      box(cx, base, label, lift(cx, base, label))
     }
   }
 }

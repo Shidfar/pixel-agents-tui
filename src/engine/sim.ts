@@ -4,11 +4,12 @@
 import { TILE } from './types'
 import type {
   Agent, Alert, Bubble, CatView, CharacterView, Dir, Effect, EffectKind, MonitorView, ParticleView, PlaneView,
-  Pose, Scene, Seat, Snapshot, Stats, TilePos, Tone, Weather, World,
+  Pose, Scene, Seat, Snapshot, TilePos, Tone, Weather, World,
 } from './types'
-import { aggregateStats, alertsFor, isStale } from './snapshots'
+import { aggregateStats, alertsFor, isStale, zeroStats } from './snapshots'
 import { createRng, hashString } from './rng'
-import { findPath, isWalkable, nextFreeSeat, posKey, tileCenter } from './world'
+import { toolClass } from './truth'
+import { DIRS, findPath, isWalkable, open, posKey, tileAt, tileCenter, where } from './world'
 
 export type SimInput = {
   readonly snapshots: readonly Snapshot[]     // every session the viewer knows, including its own and stale/ended ones
@@ -31,7 +32,6 @@ type Target = { readonly col: number; readonly row: number; readonly kind: Kind;
 type Walker = { x: number; y: number; col: number; row: number; path: TilePos[]; progress: number; dir: Dir; replan: boolean }
 type Char = Walker & {
   readonly key: string
-  readonly sessionId: string
   readonly palette: number
   snap: Snapshot
   agent: Agent
@@ -39,10 +39,8 @@ type Char = Walker & {
   isSelf: boolean
   seatId: string | null
   lounge: TilePos | null         // overflow agents stand here instead of a desk
-  couchId: string | null
   target: Target
-  mode: 'home' | 'break'
-  breakTarget: Target | null
+  breakTarget: Target | null     // set while on a break; a couch target holds that couch
   idleFor: number                // seconds idle while at home
   repickIn: number
   done: 'toParent' | 'pause' | 'toDoor' | null
@@ -81,12 +79,7 @@ const FOLLOW_SEC = 10
 const NAP_CHANCE = 0.3
 const EFFECT_MAX_AGE_MS = 10_000
 
-const AROUND: readonly TilePos[] = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]
-
-// Mirrors toolClass in truth.ts, which this module may not import.
-const READING_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'ToolSearch'])
-const WEB_TOOLS = new Set(['WebFetch', 'WebSearch'])
-const RUNNING_TOOLS = new Set(['Bash', 'BashOutput', 'KillShell'])
+const WEB_TOOLS = new Set(['WebFetch', 'WebSearch'])   // truth.ts files these under reading; the beam is its own
 const BEAM_COLOR = { reading: 0x00ccff, web: 0xffcc00, running: 0xff8800 } as const
 
 const EFFECT_BUBBLE: Partial<Record<EffectKind, { readonly text: string; readonly tone: Tone; readonly sec: number }>> = {
@@ -123,8 +116,26 @@ const dirOf = (dx: number, dy: number): Dir =>
 const weatherOf = (percent: number | null): Weather =>
   percent === null || percent < 25 ? 'clear' : percent < 50 ? 'clouds' : percent < 75 ? 'rain' : percent < 90 ? 'storm' : 'lightning'
 
-const beamKind = (tool: string): 'reading' | 'web' | 'running' | null =>
-  WEB_TOOLS.has(tool) ? 'web' : READING_TOOLS.has(tool) ? 'reading' : RUNNING_TOOLS.has(tool) ? 'running' : null
+const beamKind = (tool: string): 'reading' | 'web' | 'running' | null => {
+  if (WEB_TOOLS.has(tool)) return 'web'
+  const cls = toolClass(tool)
+  return cls === 'reading' || cls === 'running' ? cls : null
+}
+
+// Steps `o.frame` through `count` frames of `dur` seconds each.
+const advanceFrame = (o: { frame: number; frameTimer: number }, dt: number, dur: number, count: number): void => {
+  o.frameTimer += dt
+  const n = Math.floor(o.frameTimer / dur)
+  o.frameTimer -= n * dur
+  o.frame = (o.frame + n) % count
+}
+
+// A goal set mid-tile waits for the tile boundary; then the path it replaces is dropped. True when it did.
+const dropStalePath = (w: Walker): boolean => {
+  const stale = w.replan && w.progress === 0
+  if (stale) { w.path = []; w.replan = false }
+  return stale
+}
 
 // Fades toward black like the Go renderer did; ParticleView has no alpha.
 const dim = (rgb: number, f: number): number => {
@@ -154,7 +165,7 @@ export function createSim(world: World, seed: number): Sim {
   const doorPx = tileCenter(world.door)
   const DOOR: Target = { col: world.door.col, row: world.door.row, kind: 'door' }
   const seatById = new Map<string, Seat>([...world.seats, ...world.couches].map(s => [s.id, s] as const))
-  const walkable: TilePos[] = world.tiles.flatMap((r, row) => r.flatMap((t, col) => (isWalkable(t) ? [{ col, row }] : [])))
+  const walkable = where(world.tiles, isWalkable)
   const mid = (world.cols * TILE) / 2
   const windowPx = world.windows.map(p => tileCenter(p))
   const topWindow = [...windowPx].sort((a, b) => Math.abs(a.x - mid) - Math.abs(b.x - mid))[0] ?? { x: mid, y: 4 }
@@ -177,10 +188,9 @@ export function createSim(world: World, seed: number): Sim {
     weather: 'clear' as Weather,
     flashIn: 0,
     flashLeft: 0,
-    whiteboard: { day: '', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 } as Stats,
+    whiteboard: zeroStats(''),
     alerts: [] as Alert[],
     doorHold: 0,
-    doorOpen: false,
     cat: {
       x: catPx.x, y: catPx.y, col: catStart.col, row: catStart.row, path: [], progress: 0, dir: 'right', replan: false,
       mode: 'wander', goal: null, timer: 0, followIn: range(45, 75), followLeft: 0, repathIn: 0, frame: 0, frameTimer: 0,
@@ -220,10 +230,7 @@ export function createSim(world: World, seed: number): Sim {
   const animate = (c: Char, dt: number): void => {
     const spec = frameSpec(c, poseOf(c))
     if (spec.anim !== c.anim) { c.anim = spec.anim; c.frame = 0; c.frameTimer = 0 }
-    c.frameTimer += dt
-    const n = Math.floor(c.frameTimer / spec.dur)
-    c.frameTimer -= n * spec.dur
-    c.frame = (c.frame + n) % spec.count
+    advanceFrame(c, dt, spec.dur, spec.count)
   }
 
   const facing = (c: Char): Dir => {
@@ -266,7 +273,7 @@ export function createSim(world: World, seed: number): Sim {
       dir: pose === 'walk' || !atTarget(c) ? c.dir : facing(c),
       pose,
       frame: c.anim === spec.anim ? c.frame : 0,
-      palette: c.palette, label: c.agent.label, kind: c.agent.kind, isSelf: c.isSelf,
+      palette: c.palette, label: c.agent.label, isSelf: c.isSelf,
       ...(bubble ? { bubble } : {}),
       bob: waiting ? Math.round(Math.sin(st.time * 6) * 1.5) : 0,
     }
@@ -321,8 +328,8 @@ export function createSim(world: World, seed: number): Sim {
 
   // ── seats, couches, lounge ───────────────────────────────────────────────────
   const releaseCouch = (c: Char): void => {
-    if (c.couchId !== null && st.couches.get(c.couchId) === c.key) st.couches.delete(c.couchId)
-    c.couchId = null
+    const id = c.breakTarget?.kind === 'couch' ? c.breakTarget.seatId : undefined
+    if (id !== undefined && st.couches.get(id) === c.key) st.couches.delete(id)
   }
 
   const dropLounge = (c: Char): void => {
@@ -340,7 +347,7 @@ export function createSim(world: World, seed: number): Sim {
   // A seat when one is free, otherwise a lounge spot of its own: nobody is dropped.
   const claimSeat = (c: Char): void => {
     if (c.seatId !== null) return
-    const seat = nextFreeSeat(world, new Set(st.seats.keys()))
+    const seat = world.seats.find(s => !st.seats.has(s.id))
     if (seat) {
       st.seats.set(seat.id, c.key)
       c.seatId = seat.id
@@ -379,14 +386,13 @@ export function createSim(world: World, seed: number): Sim {
     if (c.stale || c.done === 'toDoor') return DOOR
     if (c.done !== null && c.visit !== null) return { col: c.visit.col, row: c.visit.row, kind: 'visit' }
     if (a.activity === 'planning') return { col: world.whiteboardSpot.col, row: world.whiteboardSpot.row, kind: 'board' }
-    if (a.activity === 'idle' && c.mode === 'break' && c.breakTarget !== null) return c.breakTarget
+    if (a.activity === 'idle' && c.breakTarget !== null) return c.breakTarget
     return homeOf(c)
   }
 
   // ── idle: break area ─────────────────────────────────────────────────────────
   const leaveBreak = (c: Char): void => {
     releaseCouch(c)
-    c.mode = 'home'
     c.breakTarget = null
   }
 
@@ -404,8 +410,7 @@ export function createSim(world: World, seed: number): Sim {
       return { col: spot.col, row: spot.row, kind: 'break' }
     }
     const target: Target = couch ? { col: couch.col, row: couch.row, kind: 'couch', seatId: couch.id } : pickSpot()
-    if (couch) { st.couches.set(couch.id, c.key); c.couchId = couch.id }
-    c.mode = 'break'
+    if (couch) st.couches.set(couch.id, c.key)
     c.breakTarget = target
     c.idleFor = 0
     c.repickIn = range(8, 20)
@@ -415,13 +420,12 @@ export function createSim(world: World, seed: number): Sim {
   // ── finished agents ──────────────────────────────────────────────────────────
   const visitTile = (parent: Char): TilePos => {
     const blocked = unavailable()
-    const next = AROUND.map(d => ({ col: parent.col + d.col, row: parent.row + d.row }))
-      .find(p => { const t = world.tiles[p.row]?.[p.col]; return t !== undefined && isWalkable(t) && !blocked.has(posKey(p)) })
+    const next = DIRS.map(d => ({ col: parent.col + d.col, row: parent.row + d.row })).find(p => open(world.tiles, p, blocked))
     return next ?? { col: parent.col, row: parent.row }
   }
 
   const startDone = (c: Char): void => {
-    const parent = st.chars.get(`${c.sessionId}/${c.agent.parent ?? 'main'}`)
+    const parent = st.chars.get(`${c.snap.sessionId}/${c.agent.parent ?? 'main'}`)
     if (parent === undefined || parent === c) { c.done = 'toDoor'; return }
     c.visit = visitTile(parent)
     c.done = 'toParent'
@@ -430,12 +434,12 @@ export function createSim(world: World, seed: number): Sim {
   // ── sync ─────────────────────────────────────────────────────────────────────
   const spawn = (e: Entry): Char => {
     const c: Char = {
-      key: e.key, sessionId: e.snap.sessionId, palette: hashString(e.key) % 6,
+      key: e.key, palette: hashString(e.key) % 6,
       x: doorPx.x, y: doorPx.y, col: world.door.col, row: world.door.row, path: [], progress: 0, dir: 'up', replan: false,
       snap: e.snap, agent: e.agent, stale: false, isSelf: false,
-      seatId: null, lounge: null, couchId: null,
+      seatId: null, lounge: null,
       target: { col: world.door.col, row: world.door.row, kind: 'break' },
-      mode: 'home', breakTarget: null, idleFor: 0, repickIn: 0,
+      breakTarget: null, idleFor: 0, repickIn: 0,
       done: null, visit: null, pause: 0, fx: null, anim: '', frame: 0, frameTimer: 0,
     }
     st.chars.set(e.key, c)
@@ -453,7 +457,7 @@ export function createSim(world: World, seed: number): Sim {
     if (!done) c.done = null
     else if (c.done === null) startDone(c)
     if (c.stale || done || c.agent.activity !== 'idle') {
-      if (c.mode === 'break') leaveBreak(c)
+      if (c.breakTarget !== null) leaveBreak(c)
       c.idleFor = 0
     }
     aim(c, goalOf(c))
@@ -593,14 +597,14 @@ export function createSim(world: World, seed: number): Sim {
       c.pause -= dt
       if (c.pause <= 0) { c.done = 'toDoor'; aim(c, DOOR) }
     }
-    if (c.replan && c.progress === 0) { c.path = []; c.replan = false }
+    dropStalePath(c)
     if (c.path.length === 0 && !atTarget(c)) plan(c)
     else moveAlong(c, WALK_PX * dt)
     // The goal changed mid-tile and moveAlong stopped at the boundary: plan at once, no pause.
-    if (c.replan && c.progress === 0) { c.path = []; c.replan = false; if (!atTarget(c)) plan(c) }
+    if (dropStalePath(c) && !atTarget(c)) plan(c)
     const arrived = atTarget(c)
     if (c.agent.activity === 'idle' && !c.stale && c.done === null) {
-      if (c.mode === 'break') {
+      if (c.breakTarget !== null) {
         c.repickIn -= dt
         if (c.repickIn <= 0) pickBreak(c)
       } else if (arrived && (c.target.kind === 'seat' || c.target.kind === 'lounge')) {
@@ -656,7 +660,7 @@ export function createSim(world: World, seed: number): Sim {
 
   const pickCatGoal = (nap: boolean): TilePos => {
     const blocked = unavailable()
-    const chairs = world.seats.filter(s => world.tiles[s.row]?.[s.col] === 'chair' && !st.seats.has(s.id))
+    const chairs = world.seats.filter(s => tileAt(world, s) === 'chair' && !st.seats.has(s.id))
     const pool: readonly TilePos[] = nap ? [...world.lounge, ...chairs] : walkable
     const free = pool.filter(p => !blocked.has(posKey(p)) && !(p.col === cat.col && p.row === cat.row))
     const p = free.length > 0 ? rng.pick(free) : cat
@@ -701,17 +705,12 @@ export function createSim(world: World, seed: number): Sim {
       cat.mode = cat.mode === 'nap' ? 'sleep' : 'sit'
       cat.goal = null
     }
-    const replanCat = (): void => {
-      if (cat.replan && cat.progress === 0) { cat.path = []; cat.replan = false; catPlan() }
-    }
+    const replanCat = (): void => { if (dropStalePath(cat)) catPlan() }
     replanCat()
     if (cat.path.length > 0) {
       moveAlong(cat, CAT_PX * dt)
       replanCat()   // moveAlong stops at a tile boundary when the goal changed: carry on without a pause
-      cat.frameTimer += dt
-      const n = Math.floor(cat.frameTimer / CAT_FRAME_DUR)
-      cat.frameTimer -= n * CAT_FRAME_DUR
-      cat.frame = (cat.frame + n) % 2
+      advanceFrame(cat, dt, CAT_FRAME_DUR, 2)
     } else {
       cat.frame = 0
       cat.frameTimer = 0
@@ -725,7 +724,6 @@ export function createSim(world: World, seed: number): Sim {
     // The door counts someone about to leave too: it stays open 0.6 s after.
     const near = [...st.chars.values()].some(c => Math.hypot(c.x - doorPx.x, c.y - doorPx.y) <= TILE)
     st.doorHold = near ? 0.6 : Math.max(0, st.doorHold - dt)
-    st.doorOpen = near || st.doorHold > 0
     leaving.forEach(removeChar)
     stepParticles(dt)
     stepSky(dt)
@@ -760,7 +758,7 @@ export function createSim(world: World, seed: number): Sim {
       const c = key === undefined ? undefined : st.chars.get(key)
       const sitting = c !== undefined && c.target.kind === 'seat' && atTarget(c)
       const mode = sitting && c.agent.activity === 'typing' ? 'code' : sitting && c.agent.activity === 'running' ? 'term' : 'off'
-      return [{ col: s.monitor.col, row: s.monitor.row, mode, phase: st.time } as const]
+      return [{ col: s.monitor.col, row: s.monitor.row, mode } as const]
     })
 
   // The self agent waiting, any waiting agent, the self main if busy, any busy agent.
@@ -787,9 +785,9 @@ export function createSim(world: World, seed: number): Sim {
     planes: st.planes.map(planeView),
     cat: catView(),
     monitors: monitors(),
-    doorOpen: st.doorOpen,
+    doorOpen: st.doorHold > 0,
     tvOn: [...st.chars.values()].some(c => c.target.kind === 'couch' && atTarget(c)),
-    sky: { hour: st.hour, weather: st.weather, flash: st.flashLeft > 0, phase: st.time },
+    sky: { hour: st.hour, weather: st.weather, flash: st.flashLeft > 0 },
     whiteboard: st.whiteboard,
     focus: focusOf(),
     alerts: st.alerts,

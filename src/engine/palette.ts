@@ -1,8 +1,7 @@
 // palette.ts — the fixed palette. Claude Code paints at most 1024 color pairs exactly, so every
 // frame snaps to colors from one list. Room tint and theme are applied to the list itself, so a
 // pixel that starts as a palette color ends as one, with no drift.
-import { artColors } from './art'
-import { TILE_PALETTE } from './art.gen'
+import { artColors, PALETTE } from './art'
 import type { ThemeName, Weather } from './types'
 
 export type FramePalette = { readonly colors: Uint32Array; readonly snap: (rgb: number) => number }
@@ -23,7 +22,6 @@ export const COLORS = {
   rain: 0xa8c8f0,
   star: 0xfff4c0,
   flash: 0xf4f4ff,
-  boardText: 0x222233,
   particles: [0x00ff88, 0xff4444, 0xff5e5e, 0xffd24a, 0x5ec8ff, 0x7cff6b, 0xd07cff, 0x8a8a9a, 0x00ccff, 0xcc66ff, 0xff8800, 0xffcc00, 0xffffff] as readonly number[],
 }
 
@@ -141,7 +139,7 @@ const fromColors = (list: readonly number[]): FramePalette => {
   return { colors, snap: makeSnap(colors) }
 }
 
-const CACHE_MAX = 16
+const CACHE_MAX = 5   // one per theme at the current quarter-hour; 128 KB each
 const palettes = new Map<string, FramePalette>()
 
 export function framePalette(theme: ThemeName, hour: number): FramePalette {
@@ -152,7 +150,7 @@ export function framePalette(theme: ThemeName, hour: number): FramePalette {
   const tint = tintFor(q)
   const base = [
     ...artColors(),
-    ...TILE_PALETTE.map(h => parseInt(h.slice(1), 16)),
+    ...PALETTE,
     ...[COLORS.void, COLORS.tvOff, COLORS.codeBg, ...COLORS.codeLines, COLORS.termBg, COLORS.termLine, COLORS.cloudLight, COLORS.cloudGrey, COLORS.cloudDark, COLORS.rain, COLORS.star, COLORS.flash, ...COLORS.particles],
     ...(['clear', 'clouds', 'rain', 'storm', 'lightning'] as const).flatMap(w => skyColors(q, w)),
   ]

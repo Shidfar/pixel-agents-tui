@@ -1,9 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { demoSnapshots } from '../src/engine/demo'
 import { parseSnapshot } from '../src/engine/snapshots'
 import { activityOf } from '../src/engine/truth'
-
-const at = (sec: number) => demoSnapshots(1_000_000 + sec * 1000, 1_000_000, '2026-10-02')
+import { at, DAY, T0 } from './fixtures'
 
 test('four named demo sessions that survive a JSON round trip', async () => {
   const snaps = at(0)
@@ -23,7 +21,7 @@ test('the script shows a permission wait, interns coming and going, and celebrat
 
 test('deterministic, live, and effect ids keep increasing across cycles', async () => {
   expect(JSON.stringify(at(17))).toBe(JSON.stringify(at(17)))
-  expect(at(17)[0]!.updatedAt).toBe(1_000_000 + 17_000)
+  expect(at(17)[0]!.updatedAt).toBe(T0 + 17_000)
   const lastId = (sec: number) => Math.max(0, ...at(sec)[0]!.effects.map(e => e.id))
   expect(lastId(119) > lastId(59)).toBe(true)
 })
@@ -42,7 +40,7 @@ test('every second of the cycle is internally consistent', async () => {
   const frames = Array.from({ length: 125 }, (_, i) => at(i))
   const ok = frames.every(snaps => snaps.every(s => s.agents.every(a => a.activity === activityOf(a)) && s.effects.every((e, i) => i === 0 || e.id > s.effects[i - 1]!.id)))
   expect(ok).toBe(true)
-  expect(frames.flat().every(s => s.v === 1 && s.endedAt === undefined && s.stats.day === '2026-10-02')).toBe(true)
+  expect(frames.flat().every(s => s.v === 1 && s.endedAt === undefined && s.stats.day === DAY)).toBe(true)
 })
 
 test('a new cycle starts every session fresh', async () => {
