@@ -10,7 +10,7 @@ const OUTLINE = 0x111122
 export const isOpaque = (px: number): boolean => px <= 0xffffff
 
 const hex = (h: string): number => parseInt(h.slice(1), 16)
-const PALETTE: readonly number[] = TILE_PALETTE.map(hex)
+export const PALETTE: readonly number[] = TILE_PALETTE.map(hex)
 
 const memo = <K, V>(cache: Map<K, V>, key: K, make: () => V): V => {
   const hit = cache.get(key)

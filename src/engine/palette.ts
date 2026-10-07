@@ -1,8 +1,7 @@
 // palette.ts — the fixed palette. Claude Code paints at most 1024 color pairs exactly, so every
 // frame snaps to colors from one list. Room tint and theme are applied to the list itself, so a
 // pixel that starts as a palette color ends as one, with no drift.
-import { artColors } from './art'
-import { TILE_PALETTE } from './art.gen'
+import { artColors, PALETTE } from './art'
 import type { ThemeName, Weather } from './types'
 
 export type FramePalette = { readonly colors: Uint32Array; readonly snap: (rgb: number) => number }
@@ -151,7 +150,7 @@ export function framePalette(theme: ThemeName, hour: number): FramePalette {
   const tint = tintFor(q)
   const base = [
     ...artColors(),
-    ...TILE_PALETTE.map(h => parseInt(h.slice(1), 16)),
+    ...PALETTE,
     ...[COLORS.void, COLORS.tvOff, COLORS.codeBg, ...COLORS.codeLines, COLORS.termBg, COLORS.termLine, COLORS.cloudLight, COLORS.cloudGrey, COLORS.cloudDark, COLORS.rain, COLORS.star, COLORS.flash, ...COLORS.particles],
     ...(['clear', 'clouds', 'rain', 'storm', 'lightning'] as const).flatMap(w => skyColors(q, w)),
   ]
