@@ -122,6 +122,21 @@ const beamKind = (tool: string): 'reading' | 'web' | 'running' | null => {
   return cls === 'reading' || cls === 'running' ? cls : null
 }
 
+// Steps `o.frame` through `count` frames of `dur` seconds each.
+const advanceFrame = (o: { frame: number; frameTimer: number }, dt: number, dur: number, count: number): void => {
+  o.frameTimer += dt
+  const n = Math.floor(o.frameTimer / dur)
+  o.frameTimer -= n * dur
+  o.frame = (o.frame + n) % count
+}
+
+// A goal set mid-tile waits for the tile boundary; then the path it replaces is dropped. True when it did.
+const dropStalePath = (w: Walker): boolean => {
+  const stale = w.replan && w.progress === 0
+  if (stale) { w.path = []; w.replan = false }
+  return stale
+}
+
 // Fades toward black like the Go renderer did; ParticleView has no alpha.
 const dim = (rgb: number, f: number): number => {
   const ch = (shift: number) => Math.floor(((rgb >> shift) & 255) * f)
@@ -176,7 +191,6 @@ export function createSim(world: World, seed: number): Sim {
     whiteboard: { day: '', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 } as Stats,
     alerts: [] as Alert[],
     doorHold: 0,
-    doorOpen: false,
     cat: {
       x: catPx.x, y: catPx.y, col: catStart.col, row: catStart.row, path: [], progress: 0, dir: 'right', replan: false,
       mode: 'wander', goal: null, timer: 0, followIn: range(45, 75), followLeft: 0, repathIn: 0, frame: 0, frameTimer: 0,
@@ -216,10 +230,7 @@ export function createSim(world: World, seed: number): Sim {
   const animate = (c: Char, dt: number): void => {
     const spec = frameSpec(c, poseOf(c))
     if (spec.anim !== c.anim) { c.anim = spec.anim; c.frame = 0; c.frameTimer = 0 }
-    c.frameTimer += dt
-    const n = Math.floor(c.frameTimer / spec.dur)
-    c.frameTimer -= n * spec.dur
-    c.frame = (c.frame + n) % spec.count
+    advanceFrame(c, dt, spec.dur, spec.count)
   }
 
   const facing = (c: Char): Dir => {
@@ -586,11 +597,11 @@ export function createSim(world: World, seed: number): Sim {
       c.pause -= dt
       if (c.pause <= 0) { c.done = 'toDoor'; aim(c, DOOR) }
     }
-    if (c.replan && c.progress === 0) { c.path = []; c.replan = false }
+    dropStalePath(c)
     if (c.path.length === 0 && !atTarget(c)) plan(c)
     else moveAlong(c, WALK_PX * dt)
     // The goal changed mid-tile and moveAlong stopped at the boundary: plan at once, no pause.
-    if (c.replan && c.progress === 0) { c.path = []; c.replan = false; if (!atTarget(c)) plan(c) }
+    if (dropStalePath(c) && !atTarget(c)) plan(c)
     const arrived = atTarget(c)
     if (c.agent.activity === 'idle' && !c.stale && c.done === null) {
       if (c.breakTarget !== null) {
@@ -694,17 +705,12 @@ export function createSim(world: World, seed: number): Sim {
       cat.mode = cat.mode === 'nap' ? 'sleep' : 'sit'
       cat.goal = null
     }
-    const replanCat = (): void => {
-      if (cat.replan && cat.progress === 0) { cat.path = []; cat.replan = false; catPlan() }
-    }
+    const replanCat = (): void => { if (dropStalePath(cat)) catPlan() }
     replanCat()
     if (cat.path.length > 0) {
       moveAlong(cat, CAT_PX * dt)
       replanCat()   // moveAlong stops at a tile boundary when the goal changed: carry on without a pause
-      cat.frameTimer += dt
-      const n = Math.floor(cat.frameTimer / CAT_FRAME_DUR)
-      cat.frameTimer -= n * CAT_FRAME_DUR
-      cat.frame = (cat.frame + n) % 2
+      advanceFrame(cat, dt, CAT_FRAME_DUR, 2)
     } else {
       cat.frame = 0
       cat.frameTimer = 0
@@ -718,7 +724,6 @@ export function createSim(world: World, seed: number): Sim {
     // The door counts someone about to leave too: it stays open 0.6 s after.
     const near = [...st.chars.values()].some(c => Math.hypot(c.x - doorPx.x, c.y - doorPx.y) <= TILE)
     st.doorHold = near ? 0.6 : Math.max(0, st.doorHold - dt)
-    st.doorOpen = near || st.doorHold > 0
     leaving.forEach(removeChar)
     stepParticles(dt)
     stepSky(dt)
@@ -780,7 +785,7 @@ export function createSim(world: World, seed: number): Sim {
     planes: st.planes.map(planeView),
     cat: catView(),
     monitors: monitors(),
-    doorOpen: st.doorOpen,
+    doorOpen: st.doorHold > 0,
     tvOn: [...st.chars.values()].some(c => c.target.kind === 'couch' && atTarget(c)),
     sky: { hour: st.hour, weather: st.weather, flash: st.flashLeft > 0, phase: st.time },
     whiteboard: st.whiteboard,
