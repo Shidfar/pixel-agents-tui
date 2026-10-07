@@ -109,13 +109,13 @@ save('x2-night-storm.png', paintCells(x2Cells), `${x2View.scene.characters.lengt
 // HD at native scale: one output px per world px, sized so the whole office is in view (352x208 px), saved at 2x.
 const hd = { sec: 12, hour: 12, cols: world.cols * TILE, rows: (world.rows * TILE) / 2, mode: 'x1' }
 const hdView = scene(hd)
-const hdPng = prefs => upscale(paintRgba(toRgba(world, hdView.scene, prefs, hdView.camera, hd.cols, hd.rows)), 2)
-save('hd.png', hdPng(DEFAULT_PREFS), `${hdView.scene.characters.length} characters`)
+const hdFrame = (v, prefs = DEFAULT_PREFS) => paintRgba(toRgba(world, v.scene, prefs, v.camera, hd.cols, hd.rows))
+save('hd.png', upscale(hdFrame(hdView), 2), `${hdView.scene.characters.length} characters`)
 
 // The five themes on one sheet, in the order `t` cycles them: three on top, two centered below.
 const THEMES = ['default', 'warm', 'cool', 'dark', 'light']
 const GAP = 16
-const tiles = THEMES.map(theme => paintRgba(toRgba(world, hdView.scene, { ...DEFAULT_PREFS, theme }, hdView.camera, hd.cols, hd.rows)))
+const tiles = THEMES.map(theme => hdFrame(hdView, { ...DEFAULT_PREFS, theme }))
 const step = tiles[0].width + GAP
 const sheet = new PNG({ width: 3 * step - GAP, height: 2 * tiles[0].height + GAP })
 tiles.forEach((tile, i) => PNG.bitblt(tile, sheet, 0, 0, tile.width, tile.height, (i % 3) * step + (i < 3 ? 0 : step / 2), Math.floor(i / 3) * (tile.height + GAP)))
@@ -130,10 +130,7 @@ save('shared.png', paintCells(toCells(world, sharedView.scene, DEFAULT_PREFS, sh
 // The engine draws from one fixed palette, so every frame fits a GIF's 256 colors exactly, with no dithering.
 const GIF_FROM = 8, GIF_SECONDS = 12, FPS = 10
 const roll = film(hd)
-const frames = range(GIF_SECONDS * FPS).map(i => {
-  const v = roll(GIF_FROM + i / FPS)
-  return upscale(paintRgba(toRgba(world, v.scene, DEFAULT_PREFS, v.camera, hd.cols, hd.rows)), 2)
-})
+const frames = range(GIF_SECONDS * FPS).map(i => upscale(hdFrame(roll(GIF_FROM + i / FPS)), 2))
 const rgbOf = (d, i) => (d[i] << 16) | (d[i + 1] << 8) | d[i + 2]
 const colors = [...frames.reduce((seen, f) => {
   range(f.width * f.height).forEach(p => seen.add(rgbOf(f.data, p * 4)))
