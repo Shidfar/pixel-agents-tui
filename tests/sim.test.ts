@@ -117,7 +117,7 @@ test('deterministic for a seed', async () => {
   expect(run()).toBe(run())
 })
 
-test('weather follows your context fill; alerts, whiteboard and focus come from snapshots', async () => {
+test('weather follows your context fill; whiteboard and focus come from snapshots', async () => {
   const weatherAt = (percent: number | null) => { const sim = createSim(world, 1); sim.sync(input([snap([agent({})], { context: { percent } })])); sim.step(0.1); return sim.scene().sky.weather }
   expect([10, 40, 60, 80, 95, null].map(weatherAt)).toEqual(['clear', 'clouds', 'rain', 'storm', 'lightning', 'clear'])
   const sim = createSim(world, 1)
@@ -125,7 +125,6 @@ test('weather follows your context fill; alerts, whiteboard and focus come from 
   sim.sync(input([snap([agent({})]), snap([waiting], { sessionId: 's2', name: 'api', stats: { day: '2026-10-02', tools: 7, edits: 1, commits: 0, permits: 1, errors: 0 } })]))
   sim.step(0.1)
   const sc = sim.scene()
-  expect(sc.alerts.map(a => a.name)).toEqual(['api'])
   expect(sc.whiteboard.tools).toBe(7)
   const s2 = sc.characters.find(c => c.key === 's2/main')!
   expect(sc.focus).toEqual({ x: s2.x, y: s2.y })

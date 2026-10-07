@@ -1,30 +1,30 @@
 // The mod shell: the only file that touches `$`. It turns hook events into truth events,
 // shares this session's snapshot through ~/.claude/pixel-agents/sessions, reads the other
-// sessions' files, and paints the office into a docked pane.
+// sessions' files, and paints the office into a docked pane. With `share` on it also
+// publishes to /Users/Shared and reads the folders other accounts on this Mac publish there.
 import type { Elements, EngineInterface, On, UiBlitArgs } from 'claude-code'
 import { demoSnapshots } from '../src/engine/demo'
 import { encodeCells, toCells, toRgba, updateCamera } from '../src/engine/render'
 import { hashString } from '../src/engine/rng'
+import { SHARED_ROOT, accountOf, foreignAccount, forShare, fromShared, pickForeign, sharedDir, sharedFolder } from '../src/engine/shared'
 import { createSim } from '../src/engine/sim'
 import type { Sim } from '../src/engine/sim'
-import { alertsFor, isStale, parseSnapshot, sessionName } from '../src/engine/snapshots'
+import { REAP_MS, SESSIONS_PARTS, alertsFor, isForeign, isStale, isStateFile, parseStateFile, sessionName } from '../src/engine/snapshots'
 import { initialSnapshot, prune, reduce } from '../src/engine/truth'
-import { DEFAULT_PREFS } from '../src/engine/types'
-import type { Alert, Camera, CameraMode, Prefs, Snapshot, ThemeName, TruthEvent } from '../src/engine/types'
+import { CAMERAS, DEFAULT_PREFS, THEMES, isCamera, isTheme } from '../src/engine/types'
+import type { Alert, Bare, Camera, Prefs, Snapshot, TruthEvent } from '../src/engine/types'
 import { defaultWorld } from '../src/engine/world'
+import { MAX_DT, cycle, dayOf, hourOf } from '../src/shell/common'
 
 type Ctx = EngineInterface
 type Els = Elements['terminal']
-type Bare = TruthEvent extends infer E ? (E extends { readonly now: number } ? Omit<E, 'now'> : never) : never
+type Seen = { snap: Snapshot; mtimeMs: number }
+type Picture = { cells: string } | { source: { rgba: string; width: number; height: number } }
 
 const PANE_ID = 'pixel-agents'
 const LOG = 'pixel-agents: '
-const HOUR_MS = 3_600_000
 const BLIT_BACKOFF_MS = 1000
-// A session id becomes a file name, here and in the `rm` of old files: only these names are touched.
-const STATE_FILE = /^[A-Za-z0-9-]+\.json$/
-const THEMES: readonly ThemeName[] = ['default', 'warm', 'cool', 'dark', 'light']
-const CAMERAS: readonly CameraMode[] = ['auto', 'fit', 'x2', 'x1']
+const HD_FRAME_MS = 125
 const WORLD = defaultWorld()
 
 // All module state lives here; a reload empties it and the next events rebuild it.
@@ -33,8 +33,14 @@ const S = {
   id: '',
   home: '',
   dir: '',
+  account: null as string | null,
+  sharedFolder: '',   // /Users/Shared/pixel-agents-<account>, the parent of sharedDir
+  sharedDir: '',
+  sharedFile: '',   // this session's file in the shared folder, set once a write to it succeeded; '' once removed
+  trust: 'unproven' as 'unproven' | 'owned' | 'refused',   // R14: the shared folders are proven this account's, or refused for the rest of the session
   snap: null as Snapshot | null,
-  others: new Map<string, { snap: Snapshot; mtimeMs: number }>(),
+  others: new Map<string, Seen>(),   // by session id
+  foreign: new Map<string, Seen>(),   // by `account:id`, which is the session id asForeign gives it
   sim: null as Sim | null,
   cam: null as Camera | null,
   prefs: DEFAULT_PREFS,
@@ -44,9 +50,10 @@ const S = {
   tickN: 0,
   lastTickAt: 0,
   lastPublish: 0,
-  writeWarned: false,
+  warned: new Set<string>(),   // problems already said in the debug log, by key
   dirty: false,
-  lastSig: 0,
+  rosterSig: 0,   // the roster's words, hashed, to tell when it needs redrawing
+  prev: null as Uint8Array | Uint32Array | null,   // the last frame drawn, to tell when a new one differs; null forces a send
   lastHdSentAt: 0,
   blitRetryAt: 0,
   alertKeys: new Set<string>(),
@@ -57,48 +64,70 @@ const S = {
 // ── helpers that do not touch `$` ──────────────────────────────────
 
 const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n))
-const pad2 = (n: number): string => String(n).padStart(2, '0')
-const dayOf = (now: number): string => {
-  const d = new Date(now)
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-}
-const hourOf = (now: number): number => {
-  const d = new Date(now)
-  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600
-}
-// FNV-1a over 32-bit words: enough to tell two frames apart.
-const hash32 = (w: Uint32Array): number => w.reduce((h, x) => Math.imul(h ^ x, 16777619) >>> 0, 2166136261)
-const hashRgba = (px: Uint8Array): number => hash32(new Uint32Array(px.buffer, px.byteOffset, px.byteLength >> 2))
-const cycle = <T>(xs: readonly T[], x: T): T => xs[(xs.indexOf(x) + 1) % xs.length]!
 const alertKey = (a: Alert): string => `${a.sessionId}|${a.kind}|${a.at}`
 
 // A bad or old store value must not reach the renderer: take each field only if it has the right type.
 const readPrefs = (raw: unknown): Prefs => {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
-  const bool = (k: 'labels' | 'effects' | 'paneOpen'): boolean => (typeof r[k] === 'boolean' ? (r[k] as boolean) : DEFAULT_PREFS[k])
+  const bool = (k: 'labels' | 'effects' | 'paneOpen' | 'share'): boolean => (typeof r[k] === 'boolean' ? (r[k] as boolean) : DEFAULT_PREFS[k])
   return {
-    theme: THEMES.find(t => t === r.theme) ?? DEFAULT_PREFS.theme,
-    camera: CAMERAS.find(c => c === r.camera) ?? DEFAULT_PREFS.camera,
+    theme: isTheme(r.theme) ? r.theme : DEFAULT_PREFS.theme,
+    camera: isCamera(r.camera) ? r.camera : DEFAULT_PREFS.camera,
     labels: bool('labels'),
     effects: bool('effects'),
     hd: typeof r.hd === 'boolean' ? r.hd : null,
     paneOpen: bool('paneOpen'),
+    share: bool('share'),
   }
 }
 
-// While the demo runs it stands in for the other sessions.
+// No pane: nothing is open and no mounted size is known, so nothing is blitted.
+function resetPane() {
+  S.pane.open = false
+  S.pane.cols = 0
+  S.pane.rows = 0
+}
+
+// Sharing is on: this account has a shared folder and the person has not turned it off.
+const sharing = (): boolean => S.prefs.share && S.sharedDir !== ''
+
+// While the demo runs it stands in for the other sessions, other accounts' included.
 const otherSnapshots = (now: number): Snapshot[] =>
-  S.demoT0 !== null ? demoSnapshots(now, S.demoT0, dayOf(now)) : [...S.others.values()].map(o => o.snap)
+  S.demoT0 !== null ? demoSnapshots(now, S.demoT0, dayOf(now)) : [...S.others.values(), ...S.foreign.values()].map(o => o.snap)
 
 const liveSnapshots = (now: number): Snapshot[] =>
   [...(S.snap ? [S.snap] : []), ...otherSnapshots(now)].filter(s => !isStale(s, now))
 
+// D5: a wait in another account's office is never an alert, so this reads `others` and never `foreign`.
 const currentAlerts = (now: number): Alert[] =>
   alertsFor([...S.others.values()].map(o => o.snap), S.snap?.sessionId ?? null, now)
 
 function syncSim(now: number) {
   if (!S.sim || !S.snap) return
   S.sim.sync({ snapshots: [S.snap, ...otherSnapshots(now)], selfSessionId: S.snap.sessionId, now, localHour: hourOf(now), day: dayOf(now) })
+}
+
+// The office at the pane's size and mode. A tick passes the seconds since the last one, which move the sim and
+// the camera, and gets a picture only when it differs from the last (HD at most every HD_FRAME_MS). A render
+// passes null: nothing moves, and the picture is always drawn so the mount is never blank.
+function drawFrame(sim: Sim, now: number, dt: null): Picture
+function drawFrame(sim: Sim, now: number, dt: number): Picture | null
+function drawFrame(sim: Sim, now: number, dt: number | null): Picture | null {
+  syncSim(now)
+  if (dt !== null) sim.step(dt)
+  const { cols, rows } = S.pane
+  const scene = sim.scene()
+  const cam = updateCamera(S.cam, WORLD, scene, { cols, rows }, S.prefs.camera, dt ?? 0)
+  S.cam = cam
+  const hd = S.pane.mode === 'image'
+  if (hd && dt !== null && now - S.lastHdSentAt < HD_FRAME_MS) return null
+  const frame = hd ? toRgba(WORLD, scene, S.prefs, cam, cols, rows) : toCells(WORLD, scene, S.prefs, cam, cols, rows)
+  const pixels = 'rgba' in frame ? frame.rgba : frame.cells
+  const prev = S.prev
+  S.prev = pixels
+  if (hd) S.lastHdSentAt = now
+  if (dt !== null && prev !== null && prev.length === pixels.length && pixels.every((x, i) => x === prev[i])) return null
+  return 'rgba' in frame ? { source: { rgba: frame.rgba.toBase64(), width: frame.width, height: frame.height } } : { cells: encodeCells(frame) }
 }
 
 // The words the Desktop roster shows, as one string, to tell when it needs redrawing.
@@ -127,7 +156,82 @@ function debug($: Ctx, text: string) {
   $.ui.log(LOG + text, { to: 'debug' })
 }
 
-async function savePrefs($: Ctx) {
+// A problem is said once, however often it comes back.
+function warnOnce($: Ctx, key: string, text: string) {
+  if (S.warned.has(key)) return
+  S.warned.add(key)
+  debug($, text)
+}
+
+// D9: one line however many polls or writes fail; the key 'write' stays about the own state file.
+const sharedUnusable = ($: Ctx, err: unknown) => warnOnce($, 'shared', `the shared folder is not usable: ${String(err)}`)
+
+// R13: /Users/Shared is world-writable, so another account may have made our shared folder before we
+// did, or put a link in it. Only a missing folder (the write makes it) or the plain folder itself is used.
+async function sharedSafe($: Ctx): Promise<boolean> {
+  const at = await $.fs.stat(S.sharedDir, { resolve: true }).catch(() => null)
+  if (at === null || (!at.isLink && at.kind === 'dir' && at.realPath === S.sharedDir)) return true
+  sharedUnusable($, new Error(`${S.sharedDir} is not a plain folder`))
+  return false
+}
+
+// R14: a plain folder that another account made first passes the checks above, and it can then swap our file
+// for a link. So the folders must be proven ours: `stat -f` does not follow links, the type may hold a space
+// (`Symbolic Link`), and nobody but the owner may write. HOME's own line gives the uid to compare with.
+async function ownProof($: Ctx, folders: readonly string[]): Promise<boolean> {
+  const ran = await $.process.run(['/usr/bin/stat', '-f', '%u %Lp %HT', S.home, ...folders]).catch(() => null)
+  if (!ran || ran.exitCode !== 0) return false
+  const rows = ran.stdout.split('\n').filter(l => l !== '').map(l => /^(\d+) ([0-7]+) (.+)$/.exec(l))
+  if (rows.length !== folders.length + 1 || rows.some(r => r === null)) return false
+  const [home, ...mine] = rows as RegExpExecArray[]
+  return mine.every(r => r[3] === 'Directory' && r[1] === home![1] && (parseInt(r[2]!, 8) & 0o022) === 0)
+}
+
+// 'refused' is final: a proof that passes late never undoes one that failed.
+const setTrust = (trust: 'owned' | 'refused') => {
+  if (S.trust !== 'refused') S.trust = trust
+}
+
+// Every folder in the list must pass `ownProof` (none: nothing exists to prove, the write makes it). A failure refuses
+// sharing for the session, and a file written just before it is left where it is: nothing may `rm` there.
+async function prove($: Ctx, folders: readonly string[]): Promise<boolean> {
+  if (folders.length === 0 || (await ownProof($, folders))) return true
+  setTrust('refused')
+  S.sharedFile = ''
+  sharedUnusable($, new Error(`${S.sharedFolder} is not this account's own folder; delete it so it can be made again`))
+  return false
+}
+
+// The only `rm` under /Users/Shared names the one file this session wrote, never a name from a listing, and
+// only in folders proven ours. A folder that turned unsafe is given up on, not retried every second.
+async function dropShared($: Ctx) {
+  const file = S.sharedFile
+  if (!file) return
+  S.sharedFile = ''
+  if (S.trust === 'owned' && (await sharedSafe($))) await $.process.run(['rm', '-f', file]).catch(() => undefined)
+}
+
+// The only write under /Users/Shared, guarded in this order: not refused, R13's link check, then (until proven) R14's
+// proof of each folder that exists before it, and of both right after the first write, which earns the trust.
+async function writeShared($: Ctx, name: string, text: string) {
+  if (S.trust === 'refused' || !(await sharedSafe($))) return
+  if (S.trust === 'unproven') {
+    const there = (await Promise.all([S.sharedFolder, S.sharedDir].map(p => $.fs.stat(p).then(() => [p], () => [] as string[])))).flat()
+    if (!(await prove($, there))) return
+  }
+  const path = `${S.sharedDir}/${name}`
+  try {
+    await $.fs.write(path, text)
+    S.sharedFile = path
+  } catch (err) {
+    sharedUnusable($, err)
+    return
+  }
+  if (S.trust === 'unproven' && (await prove($, [S.sharedFolder, S.sharedDir]))) setTrust('owned')
+}
+
+async function setPrefs($: Ctx, over: Partial<Prefs>) {
+  S.prefs = { ...S.prefs, ...over }
   try {
     await $.store.set('prefs', S.prefs)
   } catch (err) {
@@ -135,28 +239,35 @@ async function savePrefs($: Ctx) {
   }
 }
 
+async function writeOwn($: Ctx, file: string, snap: Snapshot) {
+  try {
+    await $.fs.write(`${S.dir}/${file}`, JSON.stringify(snap))
+  } catch (err) {
+    warnOnce($, 'write', `could not write the state file: ${String(err)}`)
+  }
+}
+
 // Writes at most 4 times a second when something changed, and every 5 s regardless: the
 // heartbeat has to move updatedAt too, or an idle session would look gone after 20 s.
-async function publish($: Ctx, force: boolean) {
+async function publish($: Ctx, now: number, force: boolean) {
   if (!S.snap || !S.dir) return
   const file = `${S.snap.sessionId}.json`
-  if (!STATE_FILE.test(file)) {
-    if (!S.writeWarned) debug($, `not writing a state file named ${JSON.stringify(file)}`)
-    S.writeWarned = true
+  if (!isStateFile(file)) {
+    warnOnce($, 'write', `not writing a state file named ${JSON.stringify(file)}`)
     return
   }
-  const now = await $.clock.now()
   const due = force || (S.dirty && now - S.lastPublish >= 250) || now - S.lastPublish >= 5000
   if (!due || !S.snap) return
   S.snap = { ...S.snap, updatedAt: now }
   S.lastPublish = now
   S.dirty = false
-  try {
-    await $.fs.write(`${S.dir}/${file}`, JSON.stringify(S.snap))
-  } catch (err) {
-    if (!S.writeWarned) debug($, `could not write the state file: ${String(err)}`)
-    S.writeWarned = true
-  }
+  const snap = S.snap
+  // The own file and the shared chain are independent, so they run together; the chain's guards keep their order inside it.
+  // An ended snapshot is never shared: the file goes when the session stops publishing it (end, /clear, resume, fork).
+  await Promise.all([
+    writeOwn($, file, snap),
+    snap.endedAt !== undefined ? dropShared($) : sharing() ? writeShared($, file, JSON.stringify(forShare(snap))) : undefined,
+  ])
 }
 
 async function apply($: Ctx, bare: Bare, force = false) {
@@ -165,7 +276,7 @@ async function apply($: Ctx, bare: Bare, force = false) {
   const ev = { ...bare, now } as TruthEvent
   S.snap = prune(reduce(S.snap, ev, { day: dayOf(now) }), now)
   S.dirty = true
-  await publish($, force)
+  await publish($, now, force)
 }
 
 // A subagent we never saw spawn (the module reloaded mid-turn, or the spawn raced) gets its label from the engine.
@@ -183,32 +294,85 @@ async function ensureAgent($: Ctx, agentId: string | undefined) {
   }
 }
 
-// The only reader of other sessions: keep the last good copy of each file, drop what is gone,
-// and delete what has sat untouched for an hour. Then raise an alert for each new wait.
-async function poll($: Ctx) {
-  await publish($, false)
-  if (!S.dir) return
-  const now = await $.clock.now()
+// D7: another session of this account may have turned sharing off. Take only `share` from the
+// store (R12), and when it is off, take this session's file out of the shared folder.
+async function syncShare($: Ctx) {
+  const before = S.prefs.share
   try {
-    const listed = (await $.fs.list(S.dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json') && f.name !== `${S.id}.json`)
-    for (const old of listed.filter(f => now - f.mtimeMs > HOUR_MS && STATE_FILE.test(f.name))) {
-      await $.process.run(['rm', '-f', `${S.dir}/${old.name}`]).catch(() => undefined)
+    const share = readPrefs(await $.store.get('prefs')).share
+    // a press that landed during the read is newer than what the store gave
+    if (S.prefs.share === before) S.prefs = { ...S.prefs, share }
+  } catch {
+    // unreadable right now: this session's value stays
+  }
+  if (!S.prefs.share) await dropShared($)
+}
+
+// Keep the last good copy of each listed file: drop what is no longer listed, re-read what changed, and
+// leave a copy as it is when its file is unreadable or not valid right now.
+async function refresh<F extends { key: string; mtimeMs: number }>(seen: Map<string, Seen>, files: readonly F[], load: (f: F) => Promise<Snapshot | null>) {
+  const listed = new Set(files.map(f => f.key))
+  for (const key of [...seen.keys()]) if (!listed.has(key)) seen.delete(key)
+  await Promise.all(files.filter(f => seen.get(f.key)?.mtimeMs !== f.mtimeMs).map(async f => {
+    try {
+      const snap = await load(f)
+      if (snap) seen.set(f.key, { snap, mtimeMs: f.mtimeMs })
+    } catch {
+      // unreadable right now: the last good copy stays
     }
-    const fresh = listed.filter(f => now - f.mtimeMs <= HOUR_MS)
-    const names = new Set(fresh.map(f => f.name.slice(0, -5)))
-    for (const id of [...S.others.keys()]) if (!names.has(id)) S.others.delete(id)
-    await Promise.all(fresh.filter(f => S.others.get(f.name.slice(0, -5))?.mtimeMs !== f.mtimeMs).map(async f => {
-      const id = f.name.slice(0, -5)
-      try {
-        const snap = parseSnapshot(await $.fs.read(`${S.dir}/${f.name}`))
-        if (snap && snap.sessionId === id) S.others.set(id, { snap, mtimeMs: f.mtimeMs })
-      } catch {
-        // unreadable right now: the last good copy stays
-      }
-    }))
+  }))
+}
+
+// Other accounts' files are the least trusted input here: they are only listed and read, a link
+// or anything not a plain file or folder is skipped (R9, the `sessions` folder included), and a
+// path is built only from a name that passed `foreignAccount` or `pickForeign`.
+async function pollShared($: Ctx, now: number) {
+  const accounts = await $.fs.list(SHARED_ROOT).then(
+    entries => entries.flatMap(e => (e.kind === 'dir' ? [foreignAccount(e.name, S.account)] : [])).filter((a): a is string => a !== null),
+    err => {
+      sharedUnusable($, err)
+      return null
+    },
+  )
+  if (!accounts) return
+  const found = await Promise.all(accounts.map(async account => {
+    try {
+      const dir = sharedDir(account)
+      const at = await $.fs.stat(dir)
+      if (at.isLink || at.kind !== 'dir') return []
+      return (await $.fs.list(dir)).filter(f => f.kind === 'file').map(f => ({ ...f, account, dir }))
+    } catch {
+      return []   // this account has nothing there yet, or it is not readable
+    }
+  }))
+  const picked = pickForeign(found.flat(), now).map(f => ({ ...f, key: `${f.account}:${f.name.slice(0, -5)}` }))
+  await refresh(S.foreign, picked, async f => fromShared(f.name, await $.fs.read(`${f.dir}/${f.name}`), f.account))
+}
+
+// This account's own folder: keep the last good copy of each file, drop what is gone, and delete
+// what has sat untouched for an hour.
+async function pollOwn($: Ctx, now: number) {
+  try {
+    const listed = (await $.fs.list(S.dir)).filter(f => f.kind === 'file' && isStateFile(f.name) && f.name !== `${S.id}.json`)
+    const old = listed.filter(f => now - f.mtimeMs > REAP_MS).map(f => `${S.dir}/${f.name}`)
+    if (old.length > 0) await $.process.run(['rm', '-f', ...old]).catch(() => undefined)
+    const fresh = listed.filter(f => now - f.mtimeMs <= REAP_MS).map(f => ({ ...f, key: f.name.slice(0, -5) }))
+    await refresh(S.others, fresh, async f => parseStateFile(f.name, await $.fs.read(`${S.dir}/${f.name}`)))
   } catch {
     // no folder yet just means nobody has written; the 1 s retry makes a debug line here noise
   }
+}
+
+// The only reader of other sessions. Other accounts' sessions are only for the pane, so they are scanned while it
+// is open (and once when it opens), not every second for nothing. Then raise an alert for each new wait.
+async function poll($: Ctx) {
+  const now = await $.clock.now()
+  await syncShare($)
+  await publish($, now, false)
+  if (!S.dir) return
+  const scanForeign = S.pane.open && sharing()
+  if (!scanForeign) S.foreign.clear()
+  await Promise.all([pollOwn($, now), scanForeign && pollShared($, now)])
 
   const alerts = currentAlerts(now)
   const keys = new Set(alerts.map(alertKey))
@@ -228,7 +392,7 @@ async function beginSession($: Ctx, id: string) {
   S.snap = initialSnapshot({ sessionId: id, name: sessionName(cwd, repo?.root ?? null, taken), cwd, now, day: dayOf(now) })
   S.knownAgents.clear()
   S.dirty = true
-  await publish($, true)
+  await publish($, now, true)
 }
 
 async function openPane($: Ctx) {
@@ -242,17 +406,14 @@ async function openPane($: Ctx) {
   S.sim?.settle()
   S.cam = null
   S.pane.open = true
-  S.prefs = { ...S.prefs, paneOpen: true }
-  await savePrefs($)
+  if (sharing()) await pollShared($, await $.clock.now())
+  await setPrefs($, { paneOpen: true })
 }
 
 async function closePane($: Ctx) {
   await $.ui.close({ id: PANE_ID })
-  S.pane.open = false
-  S.pane.cols = 0
-  S.pane.rows = 0
-  S.prefs = { ...S.prefs, paneOpen: false }
-  await savePrefs($)
+  resetPane()
+  await setPrefs($, { paneOpen: false })
 }
 
 // A refused blit means the mounted size is not the one we drew for. Stop blitting until the
@@ -265,7 +426,7 @@ async function blit($: Ctx, args: UiBlitArgs) {
   S.blitRetryAt = (await $.clock.now()) + BLIT_BACKOFF_MS
   S.pane.cols = 0
   S.pane.rows = 0
-  S.lastSig = 0
+  S.prev = null
   $.ui.invalidate('ui.render')
 }
 
@@ -277,38 +438,19 @@ async function tick($: Ctx) {
     if (S.pane.mode === 'roster') {
       // plain text: redrawn only when its words change
       const sig = hashString(rosterText(now))
-      if (sig !== S.lastSig) {
-        S.lastSig = sig
+      if (sig !== S.rosterSig) {
+        S.rosterSig = sig
         $.ui.invalidate('ui.render')
       }
       return
     }
     if (S.pane.cols === 0 || now < S.blitRetryAt) return
-    const dt = clamp((now - S.lastTickAt) / 1000, 0, 0.2)
+    const dt = clamp((now - S.lastTickAt) / 1000, 0, MAX_DT)
     S.lastTickAt = now
-    syncSim(now)
-    S.sim.step(dt)
-    const { cols, rows } = S.pane
-    const scene = S.sim.scene()
-    S.cam = updateCamera(S.cam, WORLD, scene, { cols, rows }, S.prefs.camera, dt)
-    if (S.pane.mode === 'raster') {
-      const f = toCells(WORLD, scene, S.prefs, S.cam, cols, rows)
-      const sig = hash32(f.cells)
-      if (sig !== S.lastSig) {
-        S.lastSig = sig
-        await blit($, { requestId: PANE_ID, key: 'office', cells: encodeCells(f) })
-      }
-    } else if (now - S.lastHdSentAt >= 125) {
-      S.lastHdSentAt = now
-      const f = toRgba(WORLD, scene, S.prefs, S.cam, cols, rows)
-      const sig = hashRgba(f.rgba)
-      if (sig !== S.lastSig) {
-        S.lastSig = sig
-        await blit($, { requestId: PANE_ID, key: 'office', source: { rgba: f.rgba.toBase64(), width: f.width, height: f.height } })
-      }
-    }
+    const picture = drawFrame(S.sim, now, dt)
+    if (picture) await blit($, { requestId: PANE_ID, key: 'office', ...picture })
     // Every 10 s at 10 fps: the frame cost, for measuring big panes in a real session.
-    if (++S.tickN % 100 === 0) debug($, `frame ${(await $.clock.now()) - now} ms, ${cols}x${rows} ${S.pane.mode}`)
+    if (++S.tickN % 100 === 0) debug($, `frame ${(await $.clock.now()) - now} ms, ${S.pane.cols}x${S.pane.rows} ${S.pane.mode}`)
   } catch (err) {
     debug($, `tick failed: ${String(err)}`)
   } finally {
@@ -319,12 +461,12 @@ async function tick($: Ctx) {
 // The control row under the picture. Each press saves the prefs and asks for a redraw.
 function controls($: Ctx, { Box, Button, Text }: Pick<Els, 'Box' | 'Button' | 'Text'>, now: number) {
   const set = async (over: Partial<Prefs>) => {
-    S.prefs = { ...S.prefs, ...over }
-    await savePrefs($)
+    await setPrefs($, over)
     $.ui.invalidate('ui.render')
   }
   const btn = (key: string, label: string, onPress: () => Promise<void>) => Button({ key, hotkey: key, label, plain: true, onPress })
   const live = liveSnapshots(now)
+  const shared = live.filter(isForeign).length
   return Box({
     columnGap: 2,
     children: [
@@ -333,11 +475,12 @@ function controls($: Ctx, { Box, Button, Text }: Pick<Els, 'Box' | 'Button' | 'T
       btn('l', 'labels', () => set({ labels: !S.prefs.labels })),
       btn('n', 'effects', () => set({ effects: !S.prefs.effects })),
       btn('g', 'hd', () => set({ hd: !S.prefs.hd })),
+      btn('s', 'share', () => set({ share: !S.prefs.share })),
       btn('d', 'demo', async () => {
         S.demoT0 = S.demoT0 === null ? await $.clock.now() : null
         $.ui.invalidate('ui.render')
       }),
-      Text({ dimColor: true, children: [`${live.length} sessions · ${live.reduce((n, s) => n + s.agents.length, 0)} agents`] }),
+      Text({ dimColor: true, children: [`${live.length} sessions · ${live.reduce((n, s) => n + s.agents.length, 0)} agents${shared > 0 ? ` · ${shared} shared` : ''}`] }),
     ],
   })
 }
@@ -346,14 +489,16 @@ export function register(on: On) {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     S.home = (await $.env.get('HOME')) ?? ''
-    S.dir = S.home ? `${S.home}/.claude/pixel-agents/sessions` : ''
+    S.dir = S.home ? `${S.home}/${SESSIONS_PARTS.join('/')}` : ''
+    S.account = accountOf(S.home)
+    S.sharedFolder = S.account ? sharedFolder(S.account) : ''
+    S.sharedDir = S.account ? sharedDir(S.account) : ''
     const term = await $.env.get('TERM_PROGRAM')
     const kitty = await $.env.get('KITTY_WINDOW_ID')
     const id = await $.session.id()
     S.prefs = readPrefs(await $.store.get('prefs'))
     if (S.prefs.hd === null) {
-      S.prefs = { ...S.prefs, hd: term === 'ghostty' || !!kitty }
-      await savePrefs($)
+      await setPrefs($, { hd: term === 'ghostty' || !!kitty })
     }
     S.id = id
     await poll($)
@@ -363,7 +508,7 @@ export function register(on: On) {
     $.clock.every(1000, () => poll($).catch(err => debug($, `poll failed: ${String(err)}`)))
     if (S.prefs.paneOpen) await openPane($)
     try {
-      await $.command.register({ name: 'office', description: 'Toggle the pixel office pane', argumentHint: '[demo]', immediate: true })
+      await $.command.register({ name: 'office', description: 'Toggle the pixel office pane', argumentHint: '[demo|share]', immediate: true })
     } catch (err) {
       debug($, `could not register /office: ${String(err)}`)
     }
@@ -470,8 +615,12 @@ export function register(on: On) {
   })
 
   on('command.run', { command: 'office' }, async ($, e) => {
-    if (e.args.trim() === 'demo') {
+    const arg = e.args.trim()
+    if (arg === 'demo') {
       S.demoT0 = S.demoT0 === null ? await $.clock.now() : null
+      await openPane($)
+    } else if (arg === 'share') {
+      await setPrefs($, { share: !S.prefs.share })
       await openPane($)
     } else if (S.pane.open) {
       await closePane($)
@@ -484,13 +633,8 @@ export function register(on: On) {
   on('ui.close', async ($, e, next) => {
     const r = await next(e)
     if (e.id === PANE_ID) {
-      S.pane.open = false
-      S.pane.cols = 0
-      S.pane.rows = 0
-      if (e.origin.kind === 'person') {
-        S.prefs = { ...S.prefs, paneOpen: false }
-        await savePrefs($)
-      }
+      resetPane()
+      if (e.origin.kind === 'person') await setPrefs($, { paneOpen: false })
     }
     return r
   })
@@ -499,15 +643,17 @@ export function register(on: On) {
     if (e.requestId !== PANE_ID) return next(e)
     // A pane that is drawn is open, even when the terminal only placed it later: start the ticks.
     // Only an explicit open remembers it in the prefs.
-    if (!S.pane.open) {
+    const opening = !S.pane.open
+    if (opening) {
       S.pane.open = true
       S.sim?.settle()
     }
     if (e.viewport) S.termCols = e.viewport.columns + e.props.bodyColumns + 1
     const now = await $.clock.now()
+    if (opening && sharing()) await pollShared($, now)
     if (e.surface !== 'terminal') {
       S.pane.mode = 'roster'
-      S.lastSig = hashString(rosterText(now))
+      S.rosterSig = hashString(rosterText(now))
       return roster($.ui.resolve(e), now)
     }
     if (!S.sim) return next(e)
@@ -521,20 +667,10 @@ export function register(on: On) {
     S.pane.mode = hd ? 'image' : 'raster'
 
     // Draw the current scene right here so the mount is never blank.
-    syncSim(now)
-    const scene = S.sim.scene()
-    S.cam = updateCamera(S.cam, WORLD, scene, { cols, rows }, S.prefs.camera, 0)
-    const body = (() => {
-      if (hd) {
-        const f = toRgba(WORLD, scene, S.prefs, S.cam, cols, rows)
-        S.lastSig = hashRgba(f.rgba)
-        S.lastHdSentAt = now
-        return els.Image({ key: 'office', columns: cols, rows, source: { rgba: f.rgba.toBase64(), width: f.width, height: f.height }, alt: 'pixel office' })
-      }
-      const f = toCells(WORLD, scene, S.prefs, S.cam, cols, rows)
-      S.lastSig = hash32(f.cells)
-      return els.Raster({ key: 'office', columns: cols, rows, cells: encodeCells(f) })
-    })()
+    const picture = drawFrame(S.sim, now, null)
+    const body = 'source' in picture
+      ? els.Image({ key: 'office', columns: cols, rows, ...picture, alt: 'pixel office' })
+      : els.Raster({ key: 'office', columns: cols, rows, ...picture })
     return els.Box({ flexDirection: 'column', children: [body, controls($, els, now)] })
   })
 

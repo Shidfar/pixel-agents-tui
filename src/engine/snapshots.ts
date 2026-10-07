@@ -3,6 +3,13 @@ import type { Activity, Agent, AgentKind, Alert, EffectKind, Snapshot, Stats, Wa
 
 export const STALE_MS = 20_000
 export const DONE_KEEP_MS = 60_000
+// A state file untouched this long is dead: every viewer skips it, and the own folder's viewers delete it.
+export const REAP_MS = 3_600_000
+// Where a session writes its file, under the home folder.
+export const SESSIONS_PARTS = ['.claude', 'pixel-agents', 'sessions'] as const
+// A session id becomes a file name, so only these names are read or deleted, in any folder.
+export const STATE_FILE = /^[A-Za-z0-9-]+\.json$/
+export const isStateFile = (name: string): boolean => STATE_FILE.test(name)
 
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
 
@@ -55,13 +62,25 @@ export function parseSnapshot(text: string): Snapshot | null {
   }
 }
 
+// A file is `<sessionId>.json`. One that names another id was made or renamed by someone else.
+export function parseStateFile(name: string, text: string): Snapshot | null {
+  if (!isStateFile(name)) return null
+  const snap = parseSnapshot(text)
+  return snap !== null && `${snap.sessionId}.json` === name ? snap : null
+}
+
 export function isStale(s: Snapshot, now: number): boolean {
   return s.endedAt !== undefined || now - s.updatedAt > STALE_MS
 }
 
+// shared.ts's asForeign puts `account:` in front of another account's session id. An own id is a state
+// file name (STATE_FILE), which never holds a colon, so a colon marks a session from another account.
+export const isForeign = (s: Snapshot): boolean => s.sessionId.includes(':')
+
+// Other accounts' waits never alert: only the user's own sessions can ask for their attention.
 export function alertsFor(snaps: readonly Snapshot[], selfSessionId: string | null, now: number): Alert[] {
   return snaps
-    .filter(s => s.sessionId !== selfSessionId && !isStale(s, now))
+    .filter(s => !isForeign(s) && s.sessionId !== selfSessionId && !isStale(s, now))
     .flatMap(s => s.agents.flatMap(a => (a.waiting ? [{ sessionId: s.sessionId, name: s.name, kind: a.waiting.kind, detail: a.waiting.detail, at: a.waiting.at }] : [])))
     .sort((x, y) => x.at - y.at)
 }

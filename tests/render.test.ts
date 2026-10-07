@@ -12,7 +12,7 @@ const stats = { day: '2026-10-02', tools: 312, edits: 41, commits: 3, permits: 5
 const scene = (over: Partial<Scene> = {}): Scene => ({
   characters: [], particles: [], planes: [], cat: { x: 200, y: 120, dir: 'right', pose: 'sit', frame: 0 },
   monitors: [], doorOpen: false, tvOn: true, sky: { hour: 12, weather: 'clear', flash: false },
-  whiteboard: stats, focus: null, alerts: [], time: 0, ...over,
+  whiteboard: stats, focus: null, time: 0, ...over,
 })
 const person = (over: Partial<CharacterView> = {}): CharacterView => {
   const s = tileCenter(world.seats[0]!)

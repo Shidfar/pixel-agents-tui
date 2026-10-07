@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { createRng, hashString } from '../src/engine/rng'
-import { aggregateStats, alertsFor, isStale, parseSnapshot, sanitizeText, sessionName } from '../src/engine/snapshots'
+import { asForeign } from '../src/engine/shared'
+import { aggregateStats, alertsFor, isForeign, isStale, isStateFile, parseSnapshot, parseStateFile, sanitizeText, sessionName } from '../src/engine/snapshots'
 import type { Agent, Snapshot } from '../src/engine/types'
 import { agent } from './fixtures'
 
@@ -41,6 +42,15 @@ test('alerts list other live sessions waiting on the user, never your own', asyn
   const mine = snap({ sessionId: 's1', agents: [waiting] })
   const dead = snap({ sessionId: 's3', agents: [waiting], endedAt: 10 })
   expect(alertsFor([other, mine, dead], 's1', 2000)).toEqual([{ sessionId: 's2', name: 'api', kind: 'permission', detail: 'Bash: npm publish', at: 500 }])
+})
+
+test('another account\'s wait never alerts, in any call', async () => {
+  const waiting = agent({ activity: 'permission', waiting: { kind: 'permission', tool: 'Bash', detail: 'Bash: npm publish', at: 500 } })
+  const theirs = asForeign(snap({ sessionId: 's2', agents: [waiting] }), 'alex')
+  const mine = snap({ sessionId: 's3', agents: [waiting] })
+  expect([isForeign(theirs), isForeign(mine)]).toEqual([true, false])
+  expect(alertsFor([theirs], null, 2000)).toEqual([])
+  expect(alertsFor([theirs, mine], 's1', 2000).map(a => a.sessionId)).toEqual(['s3'])
 })
 
 test('aggregateStats sums only the given day', async () => {
@@ -87,4 +97,18 @@ test('parseSnapshot rejects an agent whose label is missing or not a string', as
   const { label: _dropped, ...noLabel } = agent()
   expect(parseSnapshot(JSON.stringify(snap({ agents: [noLabel as unknown as Agent] })))).toBe(null)
   expect(parseSnapshot(JSON.stringify(snap({ agents: [agent({ label: 7 as unknown as string })] })))).toBe(null)
+})
+
+test('isStateFile takes a plain session id plus .json and nothing looser', async () => {
+  expect(['s1.json', 'A-b-9.json'].every(isStateFile)).toBe(true)
+  expect(['.json', 's1.txt', 's 1.json', '../s1.json', 's1.json.bak', 's1.json\n', 'a:b.json'].some(isStateFile)).toBe(false)
+})
+
+test('parseStateFile keeps a file only when the session id inside is the file name', async () => {
+  const text = JSON.stringify(snap())
+  expect(parseStateFile('s1.json', text)?.sessionId).toBe('s1')
+  expect(parseStateFile('s2.json', text)).toBe(null)
+  expect(parseStateFile('s1.json', 'not json')).toBe(null)
+  expect(parseStateFile('s1.txt', text)).toBe(null)
+  expect(parseStateFile('a b.json', JSON.stringify(snap({ sessionId: 'a b' })))).toBe(null)
 })
