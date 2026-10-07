@@ -66,17 +66,20 @@ export function alertsFor(snaps: readonly Snapshot[], selfSessionId: string | nu
     .sort((x, y) => x.at - y.at)
 }
 
+export const zeroStats = (day: string): Stats => ({ day, tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 })
+
 export function aggregateStats(snaps: readonly Snapshot[], day: string): Stats {
-  const zero: Stats = { day, tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 }
   return snaps
     .filter(s => s.stats.day === day)
-    .reduce((t, { stats: s }) => ({ day, tools: t.tools + s.tools, edits: t.edits + s.edits, commits: t.commits + s.commits, permits: t.permits + s.permits, errors: t.errors + s.errors }), zero)
+    .reduce((t, { stats: s }) => ({ day, tools: t.tools + s.tools, edits: t.edits + s.edits, commits: t.commits + s.commits, permits: t.permits + s.permits, errors: t.errors + s.errors }), zeroStats(day))
 }
+
+// The last non-empty segment of a path, whichever slash it uses.
+export const lastSegment = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? ''
 
 // Duplicates get -2, -3, … (not a middle dot: it is not an allowed cell character).
 export function sessionName(cwd: string, repoRoot: string | null, taken: readonly string[]): string {
-  const last = (repoRoot ?? cwd).split(/[\\/]/).filter(Boolean).pop() ?? ''
-  const base = sanitizeText(last, 16) || 'session'
+  const base = sanitizeText(lastSegment(repoRoot ?? cwd), 16) || 'session'
   const free = (n: number): string => {
     const candidate = n === 1 ? base : `${base}-${n}`
     return taken.includes(candidate) ? free(n + 1) : candidate

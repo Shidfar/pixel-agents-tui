@@ -7,10 +7,8 @@ import { createRng, type Rng } from '../src/engine/rng'
 import { createSim } from '../src/engine/sim'
 import { aggregateStats, alertsFor, parseSnapshot } from '../src/engine/snapshots'
 import { initialSnapshot, reduce } from '../src/engine/truth'
-import { DEFAULT_PREFS, type Activity, type AgentKind, type EffectKind, type Snapshot, type TruthEvent } from '../src/engine/types'
+import { DEFAULT_PREFS, type Activity, type AgentKind, type Bare, type EffectKind, type Snapshot, type TruthEvent } from '../src/engine/types'
 import { defaultWorld } from '../src/engine/world'
-
-type Bare = TruthEvent extends infer E ? (E extends { readonly now: number } ? Omit<E, 'now'> : never) : never
 
 const world = defaultWorld()
 const DAY = '2026-10-02'

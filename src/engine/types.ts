@@ -65,6 +65,8 @@ export type TruthEvent =
   | { readonly type: 'context'; readonly percent: number | null; readonly now: number }
   | { readonly type: 'end'; readonly now: number }
 export type TruthContext = { readonly day: string }   // local 'YYYY-MM-DD', computed by the shell
+// A TruthEvent before the shell's clock stamps it.
+export type Bare = TruthEvent extends infer E ? (E extends { readonly now: number } ? Omit<E, 'now'> : never) : never
 
 // ── World ──────────────────────────────────────────────────────────
 export const TILE = 16

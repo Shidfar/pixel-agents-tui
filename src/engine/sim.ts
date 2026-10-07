@@ -4,9 +4,9 @@
 import { TILE } from './types'
 import type {
   Agent, Alert, Bubble, CatView, CharacterView, Dir, Effect, EffectKind, MonitorView, ParticleView, PlaneView,
-  Pose, Scene, Seat, Snapshot, Stats, TilePos, Tone, Weather, World,
+  Pose, Scene, Seat, Snapshot, TilePos, Tone, Weather, World,
 } from './types'
-import { aggregateStats, alertsFor, isStale } from './snapshots'
+import { aggregateStats, alertsFor, isStale, zeroStats } from './snapshots'
 import { createRng, hashString } from './rng'
 import { toolClass } from './truth'
 import { DIRS, findPath, isWalkable, open, posKey, tileAt, tileCenter, where } from './world'
@@ -188,7 +188,7 @@ export function createSim(world: World, seed: number): Sim {
     weather: 'clear' as Weather,
     flashIn: 0,
     flashLeft: 0,
-    whiteboard: { day: '', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 } as Stats,
+    whiteboard: zeroStats(''),
     alerts: [] as Alert[],
     doorHold: 0,
     cat: {
