@@ -9,7 +9,7 @@ import type { FramePalette, Tint } from './palette'
 import { sanitizeText } from './snapshots'
 import { TILE } from './types'
 import type { Camera, CameraMode, CellFrame, CharacterView, MonitorView, Prefs, RgbaFrame, Scene, ThemeName, Tile, Tone, World } from './types'
-import { tileCenter, wallMask } from './world'
+import { DIRS, tileAt, tileCenter, wallMask } from './world'
 
 export const MAX_PAIRS = 1000
 const REDUCED_COLORS = 31   // 31² = 961 pairs, whatever the frame holds
@@ -82,11 +82,10 @@ const blit = (dst: Uint32Array, dw: number, dh: number, src: Uint32Array, sw: nu
 // Furniture sprites have see-through corners; they sit on a floor, not on the void.
 const FURNITURE: ReadonlySet<Tile> = new Set<Tile>(['desk', 'computer', 'bookshelf', 'plant', 'chair', 'counter', 'appliance', 'door', 'couch', 'tv', 'coffeeTable', 'gameConsole'])
 const GROUND: ReadonlySet<Tile> = new Set<Tile>(['floor1', 'floor2', 'floor3', 'floor4', 'floor5', 'floor6', 'floor7', 'rug'])
-const NEIGHBORS = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]   // up, down, left, right
 
-// The first neighbor that is floor or rug; floor1 when there is none.
+// The first neighbor (up, down, left, right) that is floor or rug; floor1 when there is none.
 const groundFor = (w: World, c: number, r: number): Tile =>
-  NEIGHBORS.map(d => w.tiles[r + d.row]?.[c + d.col]).find(t => t !== undefined && GROUND.has(t)) ?? 'floor1'
+  DIRS.map(d => tileAt(w, { col: c + d.col, row: r + d.row })).find(t => t !== undefined && GROUND.has(t)) ?? 'floor1'
 
 const buildLayer = (w: World): Layer => {
   const W = w.cols * TILE, H = w.rows * TILE
