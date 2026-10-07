@@ -510,6 +510,22 @@ test('with share on, the snapshot goes to the shared folder without its cwd, and
   expect(JSON.parse(shared.at(-1)!.text)).toEqual({ ...JSON.parse(own.at(-1)!.text), cwd: '' })
 })
 
+test('with share on, other accounts are listed only while the pane is open, and opening it lists them at once', async ($, on) => {
+  const t = stubs(on, { store: SHARE_ON, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
+  await start($)
+  await polls(t, 3)
+  expect([t.listed.some(underShared), t.reads.some(underShared)]).toEqual([false, false])
+  await office($)
+  expect([t.listed.includes(SHARED), t.listed.includes(THEIRS), t.reads.includes(`${THEIRS}/f1.json`)]).toEqual([true, true, true])
+  expect(await countText($)).toBe('2 sessions · 2 agents · 1 shared')
+  // closing it stops the scans again
+  await office($)
+  const seen = () => [t.listed.filter(underShared).length, t.reads.filter(underShared).length]
+  const before = seen()
+  await polls(t, 3)
+  expect(seen()).toEqual(before)
+})
+
 test('a waiting session of another account shows in the count and as alex:api, with no band alert and no toast', async ($, on) => {
   const t = stubs(on, { store: SHARE_ON, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
   await start($)
@@ -582,6 +598,7 @@ test('a link or a non-folder in place of a foreign folder, its sessions folder o
     files: { [`${linkDir}/e1.json`]: snap('e1'), [`${linked}/x1.json`]: snap('x1'), [`${plain}/y1.json`]: snap('y1'), [`${bob}/l1.json`]: snap('l1'), [`${bob}/b1.json`]: snap('b1') },
   })
   await start($)
+  await office($)
   await t.clock.advance(1100)
   expect(t.listed).not.toContain(linkDir)
   expect(t.listed).not.toContain(THEIRS)
@@ -600,8 +617,9 @@ test('foreign files never reach process.run, and an old x.json in the own shared
     files: { [`${THEIRS}/f1.json`]: waits('f1') },
   })
   await start($)
+  await office($)
   await t.clock.advance(3000)
-  expect([t.runs, t.listed.includes(MINE)]).toEqual([[], false])
+  expect([t.runs, t.listed.includes(MINE), t.reads.includes(`${THEIRS}/f1.json`)]).toEqual([[], false, true])
 })
 
 // R13: the own shared folder may have been made by another account, or be a link into this account's home.
@@ -692,7 +710,9 @@ test('another session turning share off in the store makes this one remove its f
 test('a missing /Users/Shared throws nothing and logs one line however many polls fail', async ($, on) => {
   const t = stubs(on, { store: SHARE_ON, lists: {}, failShared: true })
   await start($)
+  await office($)
   await polls(t, 4)
+  expect(t.listed).toContain(SHARED)
   expect(t.logs.filter(l => l.includes('shared folder'))).toHaveLength(1)
   // the own state file is a separate matter and still gets written
   expect([t.writes.some(w => w.path === '/home/u/.claude/pixel-agents/sessions/s1.json'), t.logs.some(l => l.includes('could not write the state file'))]).toEqual([true, false])
@@ -728,9 +748,9 @@ for (const source of ['clear', 'resume', 'fork'] as const) {
 test('a shared write that fails while the list works logs one line however many polls fail, and leaves nothing to remove', async ($, on) => {
   const t = stubs(on, { store: SHARE_ON, failShared: true, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
   await start($)
+  await office($)
   await polls(t, 4)
   expect(t.logs.filter(l => l.includes('shared folder'))).toHaveLength(1)
-  await office($)
   expect(await countText($)).toBe('2 sessions · 2 agents · 1 shared')
   // nothing was written, so sharing off has no file to remove
   await shareOffElsewhere(t)

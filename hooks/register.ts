@@ -239,6 +239,14 @@ async function setPrefs($: Ctx, over: Partial<Prefs>) {
   }
 }
 
+async function writeOwn($: Ctx, file: string, snap: Snapshot) {
+  try {
+    await $.fs.write(`${S.dir}/${file}`, JSON.stringify(snap))
+  } catch (err) {
+    warnOnce($, 'write', `could not write the state file: ${String(err)}`)
+  }
+}
+
 // Writes at most 4 times a second when something changed, and every 5 s regardless: the
 // heartbeat has to move updatedAt too, or an idle session would look gone after 20 s.
 async function publish($: Ctx, now: number, force: boolean) {
@@ -253,14 +261,13 @@ async function publish($: Ctx, now: number, force: boolean) {
   S.snap = { ...S.snap, updatedAt: now }
   S.lastPublish = now
   S.dirty = false
-  try {
-    await $.fs.write(`${S.dir}/${file}`, JSON.stringify(S.snap))
-  } catch (err) {
-    warnOnce($, 'write', `could not write the state file: ${String(err)}`)
-  }
-  // an ended snapshot is never shared: the file goes when the session stops publishing it (end, /clear, resume, fork)
-  if (S.snap.endedAt !== undefined) await dropShared($)
-  else if (sharing()) await writeShared($, file, JSON.stringify(forShare(S.snap)))
+  const snap = S.snap
+  // The own file and the shared chain are independent, so they run together; the chain's guards keep their order inside it.
+  // An ended snapshot is never shared: the file goes when the session stops publishing it (end, /clear, resume, fork).
+  await Promise.all([
+    writeOwn($, file, snap),
+    snap.endedAt !== undefined ? dropShared($) : sharing() ? writeShared($, file, JSON.stringify(forShare(snap))) : undefined,
+  ])
 }
 
 async function apply($: Ctx, bare: Bare, force = false) {
@@ -342,13 +349,9 @@ async function pollShared($: Ctx, now: number) {
   await refresh(S.foreign, picked, async f => fromShared(f.name, await $.fs.read(`${f.dir}/${f.name}`), f.account))
 }
 
-// The only reader of other sessions: keep the last good copy of each file, drop what is gone,
-// and delete what has sat untouched for an hour. Then raise an alert for each new wait.
-async function poll($: Ctx) {
-  const now = await $.clock.now()
-  await syncShare($)
-  await publish($, now, false)
-  if (!S.dir) return
+// This account's own folder: keep the last good copy of each file, drop what is gone, and delete
+// what has sat untouched for an hour.
+async function pollOwn($: Ctx, now: number) {
   try {
     const listed = (await $.fs.list(S.dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json') && f.name !== `${S.id}.json`)
     const old = listed.filter(f => now - f.mtimeMs > REAP_MS && isStateFile(f.name)).map(f => `${S.dir}/${f.name}`)
@@ -358,8 +361,18 @@ async function poll($: Ctx) {
   } catch {
     // no folder yet just means nobody has written; the 1 s retry makes a debug line here noise
   }
-  if (sharing()) await pollShared($, now)
-  else S.foreign.clear()
+}
+
+// The only reader of other sessions. Other accounts' sessions are only for the pane, so they are scanned while it
+// is open (and once when it opens), not every second for nothing. Then raise an alert for each new wait.
+async function poll($: Ctx) {
+  const now = await $.clock.now()
+  await syncShare($)
+  await publish($, now, false)
+  if (!S.dir) return
+  const scanForeign = S.pane.open && sharing()
+  if (!scanForeign) S.foreign.clear()
+  await Promise.all([pollOwn($, now), scanForeign && pollShared($, now)])
 
   const alerts = currentAlerts(now)
   const keys = new Set(alerts.map(alertKey))
@@ -393,6 +406,7 @@ async function openPane($: Ctx) {
   S.sim?.settle()
   S.cam = null
   S.pane.open = true
+  if (sharing()) await pollShared($, await $.clock.now())
   await setPrefs($, { paneOpen: true })
 }
 
@@ -629,12 +643,14 @@ export function register(on: On) {
     if (e.requestId !== PANE_ID) return next(e)
     // A pane that is drawn is open, even when the terminal only placed it later: start the ticks.
     // Only an explicit open remembers it in the prefs.
-    if (!S.pane.open) {
+    const opening = !S.pane.open
+    if (opening) {
       S.pane.open = true
       S.sim?.settle()
     }
     if (e.viewport) S.termCols = e.viewport.columns + e.props.bodyColumns + 1
     const now = await $.clock.now()
+    if (opening && sharing()) await pollShared($, now)
     if (e.surface !== 'terminal') {
       S.pane.mode = 'roster'
       S.rosterSig = hashString(rosterText(now))
