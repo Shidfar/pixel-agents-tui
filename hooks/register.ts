@@ -9,7 +9,7 @@ import { hashString } from '../src/engine/rng'
 import { SHARED_ROOT, accountOf, foreignAccount, forShare, fromShared, pickForeign, sharedDir, sharedFolder } from '../src/engine/shared'
 import { createSim } from '../src/engine/sim'
 import type { Sim } from '../src/engine/sim'
-import { REAP_MS, SESSIONS_PARTS, alertsFor, isStale, isStateFile, parseStateFile, sessionName } from '../src/engine/snapshots'
+import { REAP_MS, SESSIONS_PARTS, alertsFor, isForeign, isStale, isStateFile, parseStateFile, sessionName } from '../src/engine/snapshots'
 import { initialSnapshot, prune, reduce } from '../src/engine/truth'
 import { CAMERAS, DEFAULT_PREFS, THEMES, isCamera, isTheme } from '../src/engine/types'
 import type { Alert, Bare, Camera, Prefs, Snapshot, TruthEvent } from '../src/engine/types'
@@ -18,6 +18,7 @@ import { MAX_DT, cycle, dayOf, hourOf } from '../src/shell/common'
 
 type Ctx = EngineInterface
 type Els = Elements['terminal']
+type Seen = { snap: Snapshot; mtimeMs: number }
 
 const PANE_ID = 'pixel-agents'
 const LOG = 'pixel-agents: '
@@ -38,8 +39,8 @@ const S = {
   sharedRefused: false,   // R14: they are not: no shared write and no rm under /Users/Shared any more
   sharedWarned: false,
   snap: null as Snapshot | null,
-  others: new Map<string, { snap: Snapshot; mtimeMs: number }>(),
-  foreign: new Map<string, { snap: Snapshot; mtimeMs: number }>(),
+  others: new Map<string, Seen>(),   // by session id
+  foreign: new Map<string, Seen>(),   // by `account:id`, which is the session id asForeign gives it
   sim: null as Sim | null,
   cam: null as Camera | null,
   prefs: DEFAULT_PREFS,
@@ -85,9 +86,6 @@ const readPrefs = (raw: unknown): Prefs => {
 // While the demo runs it stands in for the other sessions, other accounts' included.
 const otherSnapshots = (now: number): Snapshot[] =>
   S.demoT0 !== null ? demoSnapshots(now, S.demoT0, dayOf(now)) : [...S.others.values(), ...S.foreign.values()].map(o => o.snap)
-
-const foreignLive = (now: number): number =>
-  S.demoT0 !== null ? 0 : [...S.foreign.values()].filter(f => !isStale(f.snap, now)).length
 
 const liveSnapshots = (now: number): Snapshot[] =>
   [...(S.snap ? [S.snap] : []), ...otherSnapshots(now)].filter(s => !isStale(s, now))
@@ -271,6 +269,21 @@ async function syncShare($: Ctx) {
   if (!S.prefs.share) await dropShared($)
 }
 
+// Keep the last good copy of each listed file: drop what is no longer listed, re-read what changed, and
+// leave a copy as it is when its file is unreadable or not valid right now.
+async function refresh<F extends { key: string; mtimeMs: number }>(seen: Map<string, Seen>, files: readonly F[], load: (f: F) => Promise<Snapshot | null>) {
+  const listed = new Set(files.map(f => f.key))
+  for (const key of [...seen.keys()]) if (!listed.has(key)) seen.delete(key)
+  await Promise.all(files.filter(f => seen.get(f.key)?.mtimeMs !== f.mtimeMs).map(async f => {
+    try {
+      const snap = await load(f)
+      if (snap) seen.set(f.key, { snap, mtimeMs: f.mtimeMs })
+    } catch {
+      // unreadable right now: the last good copy stays
+    }
+  }))
+}
+
 // Other accounts' files are the least trusted input here: they are only listed and read, a link
 // or anything not a plain file or folder is skipped (R9, the `sessions` folder included), and a
 // path is built only from a name that passed `foreignAccount` or `pickForeign`.
@@ -288,23 +301,13 @@ async function pollShared($: Ctx, now: number) {
       const dir = sharedDir(account)
       const at = await $.fs.stat(dir)
       if (at.isLink || at.kind !== 'dir') return []
-      return (await $.fs.list(dir)).filter(f => f.kind === 'file').map(f => ({ ...f, account }))
+      return (await $.fs.list(dir)).filter(f => f.kind === 'file').map(f => ({ ...f, account, dir }))
     } catch {
       return []   // this account has nothing there yet, or it is not readable
     }
   }))
-  const picked = pickForeign(found.flat(), now)
-  const keyOf = (f: { account: string; name: string }): string => `${f.account}/${f.name.slice(0, -5)}`
-  const keys = new Set(picked.map(keyOf))
-  for (const key of [...S.foreign.keys()]) if (!keys.has(key)) S.foreign.delete(key)
-  await Promise.all(picked.filter(f => S.foreign.get(keyOf(f))?.mtimeMs !== f.mtimeMs).map(async f => {
-    try {
-      const snap = fromShared(f.name, await $.fs.read(`${sharedDir(f.account)}/${f.name}`), f.account)
-      if (snap) S.foreign.set(keyOf(f), { snap, mtimeMs: f.mtimeMs })
-    } catch {
-      // unreadable right now: the last good copy stays
-    }
-  }))
+  const picked = pickForeign(found.flat(), now).map(f => ({ ...f, key: `${f.account}:${f.name.slice(0, -5)}` }))
+  await refresh(S.foreign, picked, async f => fromShared(f.name, await $.fs.read(`${f.dir}/${f.name}`), f.account))
 }
 
 // The only reader of other sessions: keep the last good copy of each file, drop what is gone,
@@ -319,18 +322,8 @@ async function poll($: Ctx) {
     for (const old of listed.filter(f => now - f.mtimeMs > REAP_MS && isStateFile(f.name))) {
       await $.process.run(['rm', '-f', `${S.dir}/${old.name}`]).catch(() => undefined)
     }
-    const fresh = listed.filter(f => now - f.mtimeMs <= REAP_MS)
-    const names = new Set(fresh.map(f => f.name.slice(0, -5)))
-    for (const id of [...S.others.keys()]) if (!names.has(id)) S.others.delete(id)
-    await Promise.all(fresh.filter(f => S.others.get(f.name.slice(0, -5))?.mtimeMs !== f.mtimeMs).map(async f => {
-      const id = f.name.slice(0, -5)
-      try {
-        const snap = parseStateFile(f.name, await $.fs.read(`${S.dir}/${f.name}`))
-        if (snap) S.others.set(id, { snap, mtimeMs: f.mtimeMs })
-      } catch {
-        // unreadable right now: the last good copy stays
-      }
-    }))
+    const fresh = listed.filter(f => now - f.mtimeMs <= REAP_MS).map(f => ({ ...f, key: f.name.slice(0, -5) }))
+    await refresh(S.others, fresh, async f => parseStateFile(f.name, await $.fs.read(`${S.dir}/${f.name}`)))
   } catch {
     // no folder yet just means nobody has written; the 1 s retry makes a debug line here noise
   }
@@ -452,7 +445,7 @@ function controls($: Ctx, { Box, Button, Text }: Pick<Els, 'Box' | 'Button' | 'T
   }
   const btn = (key: string, label: string, onPress: () => Promise<void>) => Button({ key, hotkey: key, label, plain: true, onPress })
   const live = liveSnapshots(now)
-  const shared = foreignLive(now)
+  const shared = live.filter(isForeign).length
   return Box({
     columnGap: 2,
     children: [
