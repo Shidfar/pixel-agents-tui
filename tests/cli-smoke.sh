@@ -43,4 +43,15 @@ grep -q ' 0 waiting' "$out/shared.ans" || { echo "--shared: a foreign session mu
 [ -e "$shared/pixel-agents-alex/sessions/old-0001.json" ] || { echo "--shared: a foreign file was deleted"; exit 1; }
 "$out/pixel-agents" --shared-root "$shared" --dir "$out/empty" --frames 2 --size 80x24 < /dev/null > "$out/unshared.ans"
 grep -q ' 0 sessions' "$out/unshared.ans" || { echo "without --shared, the shared root must not be read"; exit 1; }
+# --dir: only state-file names (<sessionId>.json) are read or deleted, and a file whose id is not its name
+# is not shown. notes.v2.json is not a state-file name; a plain notes.json would be one.
+own="$out/own"; mkdir -p "$own"
+snap live-0001 > "$own/live-0001.json"
+snap other-0001 > "$own/renamed-0001.json"
+snap old-0001 > "$own/old-0001.json"; touch -t 202001010000 "$own/old-0001.json"
+echo '{"keep":"me"}' > "$own/notes.v2.json"; touch -t 202001010000 "$own/notes.v2.json"
+"$out/pixel-agents" --dir "$own" --frames 2 --size 80x24 < /dev/null > "$out/own.ans"
+grep -q ' 1 sessions' "$out/own.ans" || { echo "--dir: expected exactly 1 session"; exit 1; }
+[ ! -e "$own/old-0001.json" ] || { echo "--dir: an old state file was not deleted"; exit 1; }
+[ -e "$own/notes.v2.json" ] || { echo "--dir: a file that is not a state file was deleted"; exit 1; }
 echo "cli smoke ok"

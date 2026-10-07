@@ -7,8 +7,8 @@ import { join, resolve } from 'node:path'
 import { demoSnapshots } from '../engine/demo'
 import { cellsToAnsi, toCells, updateCamera } from '../engine/render'
 import { createSim } from '../engine/sim'
-import { accountOf, asForeign, foreignAccount, pickForeign, SHARED_ROOT } from '../engine/shared'
-import { alertsFor, isStale, parseSnapshot } from '../engine/snapshots'
+import { accountOf, foreignAccount, fromShared, pickForeign, SHARED_ROOT } from '../engine/shared'
+import { REAP_MS, SESSIONS_PARTS, alertsFor, isStale, isStateFile, parseStateFile } from '../engine/snapshots'
 import { CAMERAS, DEFAULT_PREFS, THEMES, isTheme } from '../engine/types'
 import type { Camera, CellFrame, Prefs, Snapshot, ThemeName } from '../engine/types'
 import { defaultWorld } from '../engine/world'
@@ -19,7 +19,6 @@ const VALUE_FLAGS = ['--theme', '--fps', '--dir', '--frames', '--size', '--share
 
 const PAN_PX = 16
 const RESCAN_MS = 2_000
-const STALE_FILE_MS = 3_600_000
 
 const ENTER = '\x1b[?1049h\x1b[?25l\x1b[2J'
 const LEAVE = '\x1b[0m\x1b[?25h\x1b[?1049l'
@@ -69,7 +68,7 @@ function parseArgs(argv: readonly string[]): Args {
     sharedRoot: resolve(rootArg ?? SHARED_ROOT),
     theme,
     fps: int('--fps', 1, 30) ?? 10,
-    dir: resolve(dirArg ?? join(homedir(), '.claude', 'pixel-agents', 'sessions')),
+    dir: resolve(dirArg ?? join(homedir(), ...SESSIONS_PARTS)),
     frames: int('--frames', 1, Number.MAX_SAFE_INTEGER),
     size: m === null ? null : { cols: Number(m[1]), rows: Number(m[2]) },
   }
@@ -142,7 +141,7 @@ function readOne(name: string, now: number): void {
   const path = join(args.dir, name)
   try {
     const st = statSync(path)
-    if (now - st.mtimeMs > STALE_FILE_MS) {
+    if (now - st.mtimeMs > REAP_MS) {
       unlinkSync(path)
       app.files.delete(name)
       return
@@ -150,7 +149,7 @@ function readOne(name: string, now: number): void {
     const stamp = `${st.mtimeMs}:${st.size}`
     if (app.files.get(name)?.stamp === stamp) return
     // A torn write is a miss: the stamp stays unset, so the next rescan tries again.
-    const snap = parseSnapshot(readFileSync(path, 'utf8'))
+    const snap = parseStateFile(name, readFileSync(path, 'utf8'))
     if (snap !== null) app.files.set(name, { stamp, snap })
   } catch {
     // vanished or unreadable mid-scan: keep the last good copy
@@ -161,7 +160,7 @@ function rescan(now: number): void {
   app.dirty = false
   app.scannedAt = now
   const names = (() => {
-    try { return readdirSync(args.dir).filter(n => n.endsWith('.json')) } catch { return [] }   // a missing folder is zero sessions
+    try { return readdirSync(args.dir).filter(isStateFile) } catch { return [] }   // a missing folder is zero sessions
   })()
   const present = new Set(names)
   for (const name of [...app.files.keys()]) if (!present.has(name)) app.files.delete(name)
@@ -204,8 +203,8 @@ function rescanForeign(now: number): void {
     const stamp = `${c.mtimeMs}:${c.size}`
     if (app.foreign.get(key)?.stamp === stamp) continue
     try {
-      const snap = parseSnapshot(readFileSync(c.path, { encoding: 'utf8', flag: constants.O_RDONLY | constants.O_NOFOLLOW }))
-      if (snap !== null && `${snap.sessionId}.json` === c.name) app.foreign.set(key, { stamp, snap: asForeign(snap, c.account) })
+      const snap = fromShared(readFileSync(c.path, { encoding: 'utf8', flag: constants.O_RDONLY | constants.O_NOFOLLOW }), c.name, c.account)
+      if (snap !== null) app.foreign.set(key, { stamp, snap })
     } catch {
       // vanished, a link, or unreadable mid-scan: keep the last good copy
     }
