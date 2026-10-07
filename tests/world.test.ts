@@ -21,7 +21,6 @@ test('seats fill compactly: top-row work desks first, kitchen last; the playroom
   const w = defaultWorld()
   expect(w.seats.slice(0, 3).map(s => [s.col, s.row])).toEqual([[3, 3], [6, 3], [9, 3]])
   expect(w.seats.length).toBe(11)
-  expect(w.seats[10]!.zone).toBe('kitchen')
   expect(w.couches.map(c => [c.col, c.row])).toEqual([[14, 9], [15, 9], [18, 9], [19, 9]])
   expect(w.couches.every(c => isWalkable(w.tiles[c.row]![c.col]!))).toBe(true)
   expect([w.tiles[6]![16], w.tiles[6]![17], w.tv]).toEqual(['tv', 'gameConsole', { col: 16, row: 6 }])

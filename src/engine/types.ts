@@ -77,8 +77,7 @@ export type Tile =
   | 'desk' | 'computer' | 'bookshelf' | 'plant' | 'chair' | 'rug' | 'counter' | 'appliance' | 'door'
   | 'couch' | 'tv' | 'coffeeTable' | 'gameConsole'
 export type TilePos = { readonly col: number; readonly row: number }
-export type Zone = 'work' | 'kitchen' | 'playroom'
-export type Seat = { readonly id: string; readonly col: number; readonly row: number; readonly facing: Dir; readonly zone: Zone; readonly monitor?: TilePos }
+export type Seat = { readonly id: string; readonly col: number; readonly row: number; readonly facing: Dir; readonly monitor?: TilePos }
 export type World = {
   readonly cols: number
   readonly rows: number
@@ -109,7 +108,6 @@ export type CharacterView = {
   readonly frame: number
   readonly palette: number               // 0..5, CHAR_PALETTES index
   readonly label: string
-  readonly kind: AgentKind
   readonly isSelf: boolean               // the viewer's own main agent
   readonly bubble?: Bubble
   readonly bob: number                   // px, vertical, permission bob; 0 normally

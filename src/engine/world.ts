@@ -1,4 +1,4 @@
-// world.ts — the one built-in office: layout, seats, zones, BFS paths.
+// world.ts — the one built-in office: layout, seats, BFS paths.
 // Const data plus pure functions; no state, no I/O.
 import { TILE } from './types'
 import type { Seat, Tile, TilePos, World } from './types'
@@ -33,25 +33,25 @@ const buildTiles = (): Tiles => {
 
 // Work seats first, nearest the top-left first; the kitchen standing spots last.
 const SEATS: readonly Seat[] = [
-  { id: 'w1', col: 3, row: 3, facing: 'up', zone: 'work', monitor: { col: 4, row: 2 } },
-  { id: 'w2', col: 6, row: 3, facing: 'up', zone: 'work', monitor: { col: 7, row: 2 } },
-  { id: 'w3', col: 9, row: 3, facing: 'up', zone: 'work', monitor: { col: 10, row: 2 } },
-  { id: 'w4', col: 3, row: 6, facing: 'up', zone: 'work', monitor: { col: 4, row: 5 } },
-  { id: 'w5', col: 6, row: 6, facing: 'up', zone: 'work', monitor: { col: 7, row: 5 } },
-  { id: 'w6', col: 9, row: 6, facing: 'up', zone: 'work', monitor: { col: 10, row: 5 } },
-  { id: 'w7', col: 3, row: 9, facing: 'up', zone: 'work', monitor: { col: 4, row: 8 } },
-  { id: 'w8', col: 6, row: 9, facing: 'up', zone: 'work', monitor: { col: 7, row: 8 } },
-  { id: 'w9', col: 9, row: 9, facing: 'up', zone: 'work', monitor: { col: 10, row: 8 } },
-  { id: 'k1', col: 16, row: 3, facing: 'up', zone: 'kitchen' },
-  { id: 'k2', col: 18, row: 3, facing: 'up', zone: 'kitchen' },
+  { id: 'w1', col: 3, row: 3, facing: 'up', monitor: { col: 4, row: 2 } },
+  { id: 'w2', col: 6, row: 3, facing: 'up', monitor: { col: 7, row: 2 } },
+  { id: 'w3', col: 9, row: 3, facing: 'up', monitor: { col: 10, row: 2 } },
+  { id: 'w4', col: 3, row: 6, facing: 'up', monitor: { col: 4, row: 5 } },
+  { id: 'w5', col: 6, row: 6, facing: 'up', monitor: { col: 7, row: 5 } },
+  { id: 'w6', col: 9, row: 6, facing: 'up', monitor: { col: 10, row: 5 } },
+  { id: 'w7', col: 3, row: 9, facing: 'up', monitor: { col: 4, row: 8 } },
+  { id: 'w8', col: 6, row: 9, facing: 'up', monitor: { col: 7, row: 8 } },
+  { id: 'w9', col: 9, row: 9, facing: 'up', monitor: { col: 10, row: 8 } },
+  { id: 'k1', col: 16, row: 3, facing: 'up' },
+  { id: 'k2', col: 18, row: 3, facing: 'up' },
 ]
 
 // Break spots, not work seats: idle agents sit here facing the TV.
 const COUCHES: readonly Seat[] = [
-  { id: 'p1', col: 14, row: 9, facing: 'up', zone: 'playroom' },
-  { id: 'p2', col: 15, row: 9, facing: 'up', zone: 'playroom' },
-  { id: 'p3', col: 18, row: 9, facing: 'up', zone: 'playroom' },
-  { id: 'p4', col: 19, row: 9, facing: 'up', zone: 'playroom' },
+  { id: 'p1', col: 14, row: 9, facing: 'up' },
+  { id: 'p2', col: 15, row: 9, facing: 'up' },
+  { id: 'p3', col: 18, row: 9, facing: 'up' },
+  { id: 'p4', col: 19, row: 9, facing: 'up' },
 ]
 
 const WHITEBOARD_SPOT: TilePos = { col: 15, row: 6 }

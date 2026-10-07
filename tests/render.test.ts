@@ -16,7 +16,7 @@ const scene = (over: Partial<Scene> = {}): Scene => ({
 })
 const person = (over: Partial<CharacterView> = {}): CharacterView => {
   const s = tileCenter(world.seats[0]!)
-  return { key: 's1/main', x: s.x, y: s.y, dir: 'up', pose: 'type', frame: 0, palette: 0, label: 'Alpha', kind: 'main', isSelf: false, bob: 0, ...over }
+  return { key: 's1/main', x: s.x, y: s.y, dir: 'up', pose: 'type', frame: 0, palette: 0, label: 'Alpha', isSelf: false, bob: 0, ...over }
 }
 const ALLOWED = new Set([0x2580, 0x2026, 0x2713, 0x2717, 0x2605, ...Array.from({ length: 95 }, (_, i) => 0x20 + i)])
 const rowsText = (f: ReturnType<typeof toCells>) => Array.from({ length: f.rows }, (_, r) => String.fromCodePoint(...Array.from({ length: f.cols }, (_, c) => f.cells[(r * f.cols + c) * 3]!)))

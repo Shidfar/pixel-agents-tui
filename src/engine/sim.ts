@@ -273,7 +273,7 @@ export function createSim(world: World, seed: number): Sim {
       dir: pose === 'walk' || !atTarget(c) ? c.dir : facing(c),
       pose,
       frame: c.anim === spec.anim ? c.frame : 0,
-      palette: c.palette, label: c.agent.label, kind: c.agent.kind, isSelf: c.isSelf,
+      palette: c.palette, label: c.agent.label, isSelf: c.isSelf,
       ...(bubble ? { bubble } : {}),
       bob: waiting ? Math.round(Math.sin(st.time * 6) * 1.5) : 0,
     }
