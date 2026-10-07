@@ -38,9 +38,7 @@ jobs:
         run: tsc -p . && tsc -p src/cli
 
       - name: Smoke-test the binary
-        run: |
-          mkdir -p "$HOME/scratch"
-          bash tests/cli-smoke.sh
+        run: bash tests/cli-smoke.sh
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
