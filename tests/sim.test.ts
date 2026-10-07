@@ -2,9 +2,9 @@ import { expect, test } from 'claude-code/testing'
 import { createSim, type SimInput } from '../src/engine/sim'
 import { defaultWorld, isWalkable, tileCenter, where } from '../src/engine/world'
 import type { Agent, Snapshot } from '../src/engine/types'
+import { agent } from './fixtures'
 
 const world = defaultWorld()
-const agent = (over: Partial<Agent>): Agent => ({ id: 'main', kind: 'main', label: 'repo', activity: 'idle', since: 0, turnActive: false, inFlight: {}, ...over })
 const snap = (agents: Agent[], over: Partial<Snapshot> = {}): Snapshot => ({
   v: 1, sessionId: 's1', name: 'repo', cwd: '/w', startedAt: 0, updatedAt: 1_000, context: { percent: 10 },
   agents, effects: [], nextEffectId: 1, stats: { day: '2026-10-02', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 }, ...over,

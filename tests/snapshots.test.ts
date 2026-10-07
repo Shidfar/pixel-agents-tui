@@ -2,8 +2,8 @@ import { expect, test } from 'claude-code/testing'
 import { createRng, hashString } from '../src/engine/rng'
 import { aggregateStats, alertsFor, isStale, parseSnapshot, sanitizeText, sessionName } from '../src/engine/snapshots'
 import type { Agent, Snapshot } from '../src/engine/types'
+import { agent } from './fixtures'
 
-const agent = (over: Partial<Agent> = {}): Agent => ({ id: 'main', kind: 'main', label: 'repo', activity: 'idle', since: 0, turnActive: false, inFlight: {}, ...over })
 const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   v: 1, sessionId: 's1', name: 'repo', cwd: '/w/repo', startedAt: 0, updatedAt: 1000,
   context: { percent: null }, agents: [agent()], effects: [], nextEffectId: 1,
