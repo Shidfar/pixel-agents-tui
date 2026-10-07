@@ -32,7 +32,6 @@ type Target = { readonly col: number; readonly row: number; readonly kind: Kind;
 type Walker = { x: number; y: number; col: number; row: number; path: TilePos[]; progress: number; dir: Dir; replan: boolean }
 type Char = Walker & {
   readonly key: string
-  readonly sessionId: string
   readonly palette: number
   snap: Snapshot
   agent: Agent
@@ -40,10 +39,8 @@ type Char = Walker & {
   isSelf: boolean
   seatId: string | null
   lounge: TilePos | null         // overflow agents stand here instead of a desk
-  couchId: string | null
   target: Target
-  mode: 'home' | 'break'
-  breakTarget: Target | null
+  breakTarget: Target | null     // set while on a break; a couch target holds that couch
   idleFor: number                // seconds idle while at home
   repickIn: number
   done: 'toParent' | 'pause' | 'toDoor' | null
@@ -320,8 +317,8 @@ export function createSim(world: World, seed: number): Sim {
 
   // ── seats, couches, lounge ───────────────────────────────────────────────────
   const releaseCouch = (c: Char): void => {
-    if (c.couchId !== null && st.couches.get(c.couchId) === c.key) st.couches.delete(c.couchId)
-    c.couchId = null
+    const id = c.breakTarget?.kind === 'couch' ? c.breakTarget.seatId : undefined
+    if (id !== undefined && st.couches.get(id) === c.key) st.couches.delete(id)
   }
 
   const dropLounge = (c: Char): void => {
@@ -378,14 +375,13 @@ export function createSim(world: World, seed: number): Sim {
     if (c.stale || c.done === 'toDoor') return DOOR
     if (c.done !== null && c.visit !== null) return { col: c.visit.col, row: c.visit.row, kind: 'visit' }
     if (a.activity === 'planning') return { col: world.whiteboardSpot.col, row: world.whiteboardSpot.row, kind: 'board' }
-    if (a.activity === 'idle' && c.mode === 'break' && c.breakTarget !== null) return c.breakTarget
+    if (a.activity === 'idle' && c.breakTarget !== null) return c.breakTarget
     return homeOf(c)
   }
 
   // ── idle: break area ─────────────────────────────────────────────────────────
   const leaveBreak = (c: Char): void => {
     releaseCouch(c)
-    c.mode = 'home'
     c.breakTarget = null
   }
 
@@ -403,8 +399,7 @@ export function createSim(world: World, seed: number): Sim {
       return { col: spot.col, row: spot.row, kind: 'break' }
     }
     const target: Target = couch ? { col: couch.col, row: couch.row, kind: 'couch', seatId: couch.id } : pickSpot()
-    if (couch) { st.couches.set(couch.id, c.key); c.couchId = couch.id }
-    c.mode = 'break'
+    if (couch) st.couches.set(couch.id, c.key)
     c.breakTarget = target
     c.idleFor = 0
     c.repickIn = range(8, 20)
@@ -419,7 +414,7 @@ export function createSim(world: World, seed: number): Sim {
   }
 
   const startDone = (c: Char): void => {
-    const parent = st.chars.get(`${c.sessionId}/${c.agent.parent ?? 'main'}`)
+    const parent = st.chars.get(`${c.snap.sessionId}/${c.agent.parent ?? 'main'}`)
     if (parent === undefined || parent === c) { c.done = 'toDoor'; return }
     c.visit = visitTile(parent)
     c.done = 'toParent'
@@ -428,12 +423,12 @@ export function createSim(world: World, seed: number): Sim {
   // ── sync ─────────────────────────────────────────────────────────────────────
   const spawn = (e: Entry): Char => {
     const c: Char = {
-      key: e.key, sessionId: e.snap.sessionId, palette: hashString(e.key) % 6,
+      key: e.key, palette: hashString(e.key) % 6,
       x: doorPx.x, y: doorPx.y, col: world.door.col, row: world.door.row, path: [], progress: 0, dir: 'up', replan: false,
       snap: e.snap, agent: e.agent, stale: false, isSelf: false,
-      seatId: null, lounge: null, couchId: null,
+      seatId: null, lounge: null,
       target: { col: world.door.col, row: world.door.row, kind: 'break' },
-      mode: 'home', breakTarget: null, idleFor: 0, repickIn: 0,
+      breakTarget: null, idleFor: 0, repickIn: 0,
       done: null, visit: null, pause: 0, fx: null, anim: '', frame: 0, frameTimer: 0,
     }
     st.chars.set(e.key, c)
@@ -451,7 +446,7 @@ export function createSim(world: World, seed: number): Sim {
     if (!done) c.done = null
     else if (c.done === null) startDone(c)
     if (c.stale || done || c.agent.activity !== 'idle') {
-      if (c.mode === 'break') leaveBreak(c)
+      if (c.breakTarget !== null) leaveBreak(c)
       c.idleFor = 0
     }
     aim(c, goalOf(c))
@@ -598,7 +593,7 @@ export function createSim(world: World, seed: number): Sim {
     if (c.replan && c.progress === 0) { c.path = []; c.replan = false; if (!atTarget(c)) plan(c) }
     const arrived = atTarget(c)
     if (c.agent.activity === 'idle' && !c.stale && c.done === null) {
-      if (c.mode === 'break') {
+      if (c.breakTarget !== null) {
         c.repickIn -= dt
         if (c.repickIn <= 0) pickBreak(c)
       } else if (arrived && (c.target.kind === 'seat' || c.target.kind === 'lounge')) {
