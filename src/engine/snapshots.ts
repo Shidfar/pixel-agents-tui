@@ -3,6 +3,13 @@ import type { Activity, Agent, AgentKind, Alert, EffectKind, Snapshot, Stats, Wa
 
 export const STALE_MS = 20_000
 export const DONE_KEEP_MS = 60_000
+// A state file untouched this long is dead: every viewer skips it, and the own folder's viewers delete it.
+export const REAP_MS = 3_600_000
+// Where a session writes its file, under the home folder.
+export const SESSIONS_PARTS = ['.claude', 'pixel-agents', 'sessions'] as const
+// A session id becomes a file name, so only these names are read or deleted, in any folder.
+export const STATE_FILE = /^[A-Za-z0-9-]+\.json$/
+export const isStateFile = (name: string): boolean => STATE_FILE.test(name)
 
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
 
@@ -53,6 +60,13 @@ export function parseSnapshot(text: string): Snapshot | null {
   } catch {
     return null
   }
+}
+
+// A file is `<sessionId>.json`. One that names another id was made or renamed by someone else.
+export function parseStateFile(name: string, text: string): Snapshot | null {
+  if (!isStateFile(name)) return null
+  const snap = parseSnapshot(text)
+  return snap !== null && `${snap.sessionId}.json` === name ? snap : null
 }
 
 export function isStale(s: Snapshot, now: number): boolean {

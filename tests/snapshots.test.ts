@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { createRng, hashString } from '../src/engine/rng'
-import { aggregateStats, alertsFor, isStale, parseSnapshot, sanitizeText, sessionName } from '../src/engine/snapshots'
+import { aggregateStats, alertsFor, isStale, isStateFile, parseSnapshot, parseStateFile, sanitizeText, sessionName } from '../src/engine/snapshots'
 import type { Agent, Snapshot } from '../src/engine/types'
 import { agent } from './fixtures'
 
@@ -87,4 +87,18 @@ test('parseSnapshot rejects an agent whose label is missing or not a string', as
   const { label: _dropped, ...noLabel } = agent()
   expect(parseSnapshot(JSON.stringify(snap({ agents: [noLabel as unknown as Agent] })))).toBe(null)
   expect(parseSnapshot(JSON.stringify(snap({ agents: [agent({ label: 7 as unknown as string })] })))).toBe(null)
+})
+
+test('isStateFile takes a plain session id plus .json and nothing looser', async () => {
+  expect(['s1.json', 'A-b-9.json'].every(isStateFile)).toBe(true)
+  expect(['.json', 's1.txt', 's 1.json', '../s1.json', 's1.json.bak', 's1.json\n', 'a:b.json'].some(isStateFile)).toBe(false)
+})
+
+test('parseStateFile keeps a file only when the session id inside is the file name', async () => {
+  const text = JSON.stringify(snap())
+  expect(parseStateFile('s1.json', text)?.sessionId).toBe('s1')
+  expect(parseStateFile('s2.json', text)).toBe(null)
+  expect(parseStateFile('s1.json', 'not json')).toBe(null)
+  expect(parseStateFile('s1.txt', text)).toBe(null)
+  expect(parseStateFile('a b.json', JSON.stringify(snap({ sessionId: 'a b' })))).toBe(null)
 })

@@ -1,6 +1,6 @@
 // Helpers for the shared office: accounts on one Mac publish to /Users/Shared and read each other.
 // Pure: paths are strings, callers do the I/O and pass the clock in.
-import { sanitizeText } from './snapshots'
+import { REAP_MS, isStateFile, parseStateFile, sanitizeText } from './snapshots'
 import type { Snapshot } from './types'
 
 export const SHARED_ROOT = '/Users/Shared'
@@ -10,7 +10,6 @@ export const MAX_FOREIGN_SESSIONS = 50
 // Folder and file names come from other accounts, so match the whole name and nothing looser.
 const ACCOUNT = /^[a-z0-9._-]{1,32}$/
 const FOREIGN_FOLDER = /^pixel-agents-([a-z0-9._-]{1,32})$/
-const FOREIGN_FILE = /^[A-Za-z0-9-]+\.json$/
 
 export function accountOf(home: string): string | null {
   const last = home.split('/').filter(Boolean).pop() ?? ''
@@ -47,9 +46,15 @@ export function asForeign(s: Snapshot, account: string): Snapshot {
   }
 }
 
+// What a viewer makes of another account's file: valid, named for its own session id, shown as theirs.
+export function fromShared(text: string, name: string, account: string): Snapshot | null {
+  const snap = parseStateFile(name, text)
+  return snap === null ? null : asForeign(snap, account)
+}
+
 export function pickForeign<T extends { readonly mtimeMs: number; readonly size: number; readonly name: string }>(files: readonly T[], now: number): T[] {
   return files
-    .filter(f => FOREIGN_FILE.test(f.name) && f.size <= MAX_FOREIGN_BYTES && now - f.mtimeMs <= 3_600_000)
+    .filter(f => isStateFile(f.name) && f.size <= MAX_FOREIGN_BYTES && now - f.mtimeMs <= REAP_MS)
     .sort((a, b) => b.mtimeMs - a.mtimeMs)
     .slice(0, MAX_FOREIGN_SESSIONS)
 }

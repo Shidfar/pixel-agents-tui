@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { MAX_FOREIGN_BYTES, MAX_FOREIGN_SESSIONS, accountOf, asForeign, forShare, foreignAccount, pickForeign, sharedDir, sharedFolderName } from '../src/engine/shared'
+import { MAX_FOREIGN_BYTES, MAX_FOREIGN_SESSIONS, accountOf, asForeign, forShare, foreignAccount, fromShared, pickForeign, sharedDir, sharedFolderName } from '../src/engine/shared'
 import { parseSnapshot } from '../src/engine/snapshots'
 import type { Agent, Snapshot } from '../src/engine/types'
 
@@ -114,4 +114,11 @@ test('pickForeign returns the caller objects, keeps their extra fields, and does
   expect(kept[1]).toBe(a)
   expect(kept[0]?.dir).toBe('pixel-agents-y')
   expect(input).toEqual([a, b])
+})
+
+test('fromShared shows a valid file as the account\'s copy and rejects one whose id is not its name', async () => {
+  const text = JSON.stringify(forShare(snap()))
+  expect(fromShared(text, 's1.json', 'jane.doe')).toEqual(asForeign(forShare(snap()), 'jane.doe'))
+  expect(fromShared(text, 's2.json', 'jane.doe')).toBe(null)
+  expect(fromShared('not json', 's1.json', 'jane.doe')).toBe(null)
 })
