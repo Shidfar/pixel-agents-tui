@@ -1,1 +1,1 @@
-{ "compilerOptions": { "target": "es2023", "module": "esnext", "moduleResolution": "bundler", "strict": true, "noEmit": true, "skipLibCheck": true, "types": ["bun"] }, "include": ["./*.ts", "../engine"] }
+{ "compilerOptions": { "target": "es2023", "module": "esnext", "moduleResolution": "bundler", "strict": true, "noEmit": true, "skipLibCheck": true, "types": ["bun"] }, "include": ["./*.ts", "../engine", "../shell"] }

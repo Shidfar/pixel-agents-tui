@@ -147,6 +147,12 @@ export type Prefs = {
   readonly share: boolean                // publish to and read from /Users/Shared (accounts on this Mac)
 }
 export const DEFAULT_PREFS: Prefs = { theme: 'default', camera: 'auto', labels: true, effects: true, hd: null, paneOpen: false, share: false }
+// Record<T, true> makes the compiler demand every member of the union; key order is the order `t` and `z` cycle in.
+const namesOf = <T extends string>(record: Record<T, true>): readonly T[] => Object.keys(record) as T[]
+export const THEMES = namesOf<ThemeName>({ default: true, warm: true, cool: true, dark: true, light: true })
+export const CAMERAS = namesOf<CameraMode>({ auto: true, fit: true, x2: true, x1: true })
+export const isTheme = (x: unknown): x is ThemeName => THEMES.some(t => t === x)
+export const isCamera = (x: unknown): x is CameraMode => CAMERAS.some(c => c === x)
 export type Camera = { readonly x: number; readonly y: number; readonly scale: number; readonly pendingScale: number; readonly pendingSec: number }
 // x, y: world px of the view's top-left (may be negative when the view is larger than the world, to center it)
 // scale: world px per output px (1 = native). Output px = one half-block row: cols × rows*2.

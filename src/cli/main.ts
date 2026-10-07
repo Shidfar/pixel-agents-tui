@@ -9,13 +9,12 @@ import { cellsToAnsi, toCells, updateCamera } from '../engine/render'
 import { createSim } from '../engine/sim'
 import { accountOf, asForeign, foreignAccount, pickForeign, SHARED_ROOT } from '../engine/shared'
 import { alertsFor, isStale, parseSnapshot } from '../engine/snapshots'
-import { DEFAULT_PREFS } from '../engine/types'
-import type { Camera, CameraMode, CellFrame, Prefs, Snapshot, ThemeName } from '../engine/types'
+import { CAMERAS, DEFAULT_PREFS, THEMES, isTheme } from '../engine/types'
+import type { Camera, CellFrame, Prefs, Snapshot, ThemeName } from '../engine/types'
 import { defaultWorld } from '../engine/world'
+import { MAX_DT, cycle, dayOf, hourOf } from '../shell/common'
 
-const USAGE = 'usage: pixel-agents [--demo] [--shared] [--theme default|warm|cool|dark|light] [--fps 1-30 (10)] [--dir PATH] [--frames N] [--size COLSxROWS]'
-const THEMES: readonly ThemeName[] = ['default', 'warm', 'cool', 'dark', 'light']
-const CAMERAS: readonly CameraMode[] = ['auto', 'fit', 'x2', 'x1']
+const USAGE = `usage: pixel-agents [--demo] [--shared] [--theme ${THEMES.join('|')}] [--fps 1-30 (10)] [--dir PATH] [--frames N] [--size COLSxROWS]`
 const VALUE_FLAGS = ['--theme', '--fps', '--dir', '--frames', '--size', '--shared-root']
 
 const PAN_PX = 16
@@ -59,7 +58,7 @@ function parseArgs(argv: readonly string[]): Args {
     return /^\d+$/.test(v) && Number(v) >= lo && Number(v) <= hi ? Number(v) : bad(`${flag} must be an integer from ${lo} to ${hi}`)
   }
   const themeArg = value('--theme')
-  const theme = themeArg === null ? DEFAULT_PREFS.theme : THEMES.find(t => t === themeArg) ?? bad(`--theme must be one of ${THEMES.join(', ')}`)
+  const theme = themeArg === null ? DEFAULT_PREFS.theme : isTheme(themeArg) ? themeArg : bad(`--theme must be one of ${THEMES.join(', ')}`)
   const sizeArg = value('--size')
   const m = sizeArg === null ? null : /^([1-9]\d*)x([1-9]\d*)$/.exec(sizeArg) ?? bad('--size must look like 100x30')
   const dirArg = value('--dir')
@@ -226,10 +225,6 @@ function watchDir(): FSWatcher | null {
 
 // ── One frame ──────────────────────────────────────────────────────────────
 
-const two = (n: number): string => String(n).padStart(2, '0')
-const dayOf = (d: Date): string => `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`
-const hourOf = (d: Date): number => d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600
-
 // The office gets every row but the last. `--size` beats the terminal; 80x24 when neither says.
 function readSize(): { readonly cols: number; readonly rows: number } {
   const s = args.size ?? { cols: process.stdout.columns || 80, rows: process.stdout.rows || 24 }
@@ -247,15 +242,14 @@ function frame(): void {
   const now = Date.now()
   if (app.dirty || now - app.scannedAt >= RESCAN_MS) rescan(now)
   const { cols, rows } = readSize()
-  const dt = app.last === null ? 0 : Math.min(0.2, (now - app.last) / 1000)
+  const dt = app.last === null ? 0 : Math.min(MAX_DT, (now - app.last) / 1000)
   app.last = now
-  const date = new Date(now)
-  const day = dayOf(date)
+  const day = dayOf(now)
   // Only your own folder (or the demo) can make `waiting` count; another account's wait never does.
   const own = [...app.files.values()].map(f => f.snap)
   // Demo stands in for the real sessions while it is on, as in the mod.
   const snaps = app.demoT0 === null ? [...own, ...[...app.foreign.values()].map(f => f.snap)] : demoSnapshots(now, app.demoT0, day)
-  app.sim.sync({ snapshots: snaps, selfSessionId: null, now, localHour: hourOf(date), day })
+  app.sim.sync({ snapshots: snaps, selfSessionId: null, now, localHour: hourOf(now), day })
   app.sim.step(dt)
   const scene = app.sim.scene()
   const cam = updateCamera(app.cam, app.world, scene, { cols, rows: rows - 1 }, app.prefs.camera, dt)
@@ -268,8 +262,6 @@ function frame(): void {
 }
 
 // ── Keys ───────────────────────────────────────────────────────────────────
-
-const cycle = <T>(xs: readonly T[], x: T): T => xs[(xs.indexOf(x) + 1) % xs.length]!
 
 // Panning only means something at a fixed zoom; at auto and fit the camera frames the office itself.
 const pan = (dx: number, dy: number): void => {
