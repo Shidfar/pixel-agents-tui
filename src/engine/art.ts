@@ -227,7 +227,7 @@ export function artColors(): readonly number[] {
     ...(['walk', 'sit', 'sleep'] as const).flatMap(pose => [0, 1].map(f => catSprite(pose, 'right', f).px)),
     planeSprite('right').px,
   ]
-  // straight into the Set: spreading ~150K pixels into arrays first took twice as long
+  // Straight into the Set: spreading ~150K pixels into arrays first took twice as long
   const colors = new Set<number>()
   sprites.forEach(px => px.forEach(c => { if (isOpaque(c)) colors.add(c) }))
   colorCache.all = [...colors].sort((a, b) => a - b)

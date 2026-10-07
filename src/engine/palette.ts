@@ -139,7 +139,7 @@ const fromColors = (list: readonly number[]): FramePalette => {
   return { colors, snap: makeSnap(colors) }
 }
 
-const CACHE_MAX = 5   // one per theme; 128 KB each
+const CACHE_MAX = 5   // one per theme at the current quarter-hour; 128 KB each
 const palettes = new Map<string, FramePalette>()
 
 export function framePalette(theme: ThemeName, hour: number): FramePalette {
