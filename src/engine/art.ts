@@ -220,13 +220,16 @@ const colorCache: { all: readonly number[] | null } = { all: null }
 
 export function artColors(): readonly number[] {
   if (colorCache.all) return colorCache.all
-  const all = [
-    ...TILE_NAMES.flatMap(n => [...tileSprite(n)]),
-    ...Array.from({ length: 16 }, (_, m) => [...wallSprite(m)]).flat(),
-    ...CHAR_PALETTES.flatMap((_, p) => POSES.flatMap(pose => DIRS.flatMap(dir => Array.from({ length: 4 }, (_, f) => [...charSprite(p, pose, dir, f).px]).flat()))),
-    ...(['walk', 'sit', 'sleep'] as const).flatMap(pose => [0, 1].flatMap(f => [...catSprite(pose, 'right', f).px])),
-    ...planeSprite('right').px,
+  const sprites = [
+    ...TILE_NAMES.map(n => tileSprite(n)),
+    ...Array.from({ length: 16 }, (_, m) => wallSprite(m)),
+    ...CHAR_PALETTES.flatMap((_, p) => POSES.flatMap(pose => DIRS.flatMap(dir => Array.from({ length: 4 }, (_, f) => charSprite(p, pose, dir, f).px)))),
+    ...(['walk', 'sit', 'sleep'] as const).flatMap(pose => [0, 1].map(f => catSprite(pose, 'right', f).px)),
+    planeSprite('right').px,
   ]
-  colorCache.all = [...new Set(all.filter(isOpaque))].sort((a, b) => a - b)
+  // straight into the Set: spreading ~150K pixels into arrays first took twice as long
+  const colors = new Set<number>()
+  sprites.forEach(px => px.forEach(c => { if (isOpaque(c)) colors.add(c) }))
+  colorCache.all = [...colors].sort((a, b) => a - b)
   return colorCache.all
 }
