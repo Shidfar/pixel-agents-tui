@@ -443,16 +443,16 @@ test('a pane the terminal places later is open once it is drawn, and animates', 
 // HOME in the stubs is /home/u, so this account is `u` and publishes under /Users/Shared/pixel-agents-u.
 
 const NOW = 1_790_000_000_000
-const THEIRS = `${SHARED}/pixel-agents-farshid/sessions`
+const THEIRS = `${SHARED}/pixel-agents-alex/sessions`
 const entry = (name: string, over: Partial<Entry> = {}): Entry => ({ name, kind: 'file', size: 10, isLink: false, mtimeMs: NOW, ...over })
 const dir = (name: string): Entry => entry(name, { kind: 'dir', size: 0, mtimeMs: 0 })
 const snap = (sessionId: string, over: object = {}) => JSON.stringify({ ...quiet, sessionId, ...over })
 const blocked = { activity: 'permission', detail: 'Bash: x', waiting: { kind: 'permission', tool: 'Bash', detail: 'Bash: x', at: 5 } }
 const waits = (sessionId: string) => snap(sessionId, { agents: [{ ...quiet.agents[0], ...blocked, turnActive: true }] })
 const underShared = (p: string) => p.startsWith(SHARED)
-// one other account, farshid, with these files; `files` maps a name to its content
-const farshid = (entries: readonly Entry[], files: Record<string, string> = {}) => ({
-  lists: { [SHARED]: [dir('pixel-agents-farshid'), dir('pixel-agents-u'), entry('.DS_Store')], [THEIRS]: entries, [MINE]: [], '/home/u/.claude/pixel-agents/sessions': [] },
+// one other account, alex, with these files; `files` maps a name to its content
+const alex = (entries: readonly Entry[], files: Record<string, string> = {}) => ({
+  lists: { [SHARED]: [dir('pixel-agents-alex'), dir('pixel-agents-u'), entry('.DS_Store')], [THEIRS]: entries, [MINE]: [], '/home/u/.claude/pixel-agents/sessions': [] },
   files: Object.fromEntries(Object.entries(files).map(([name, text]) => [`${THEIRS}/${name}`, text])),
 })
 const SHARE_ON = { prefs: { share: true } }
@@ -464,7 +464,7 @@ const countText = async ($: Engine) => {
 }
 
 test('with share off nothing is written, listed or read under /Users/Shared', async ($, on) => {
-  const t = stubs(on, { ...farshid([entry('f1.json')], { 'f1.json': waits('f1') }) })
+  const t = stubs(on, { ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
   await start($)
   await t.clock.advance(6000)
   expect(t.writes.length).toBeGreaterThan(0)
@@ -473,7 +473,7 @@ test('with share off nothing is written, listed or read under /Users/Shared', as
 
 for (const bad of ['yes', 1, null, {}]) {
   test(`a stored share of ${JSON.stringify(bad)} is not on`, async ($, on) => {
-    const t = stubs(on, { store: { prefs: { share: bad } }, ...farshid([entry('f1.json')], { 'f1.json': waits('f1') }) })
+    const t = stubs(on, { store: { prefs: { share: bad } }, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
     await start($)
     await t.clock.advance(6000)
     expect([t.writes.some(w => underShared(w.path)), t.listed.some(underShared)]).toEqual([false, false])
@@ -493,28 +493,28 @@ test('with share on, the snapshot goes to the shared folder without its cwd, and
   expect(JSON.parse(shared.at(-1)!.text)).toEqual({ ...JSON.parse(own.at(-1)!.text), cwd: '' })
 })
 
-test('a waiting session of another account shows in the count and as farshid:api, with no band alert and no toast', async ($, on) => {
-  const t = stubs(on, { store: SHARE_ON, ...farshid([entry('f1.json')], { 'f1.json': waits('f1') }) })
+test('a waiting session of another account shows in the count and as alex:api, with no band alert and no toast', async ($, on) => {
+  const t = stubs(on, { store: SHARE_ON, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
   await start($)
   await t.clock.advance(1100)
   await t.clock.advance(1100)
   await office($)
   expect(await countText($)).toBe('2 sessions · 2 agents · 1 shared')
   const desk = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await desk.find({ type: 'Text', text: /farshid:api/ })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: /alex:api/ })).toBeDefined()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect([await band.find({ type: 'Text', text: /waiting/ }), t.toasts]).toEqual([undefined, []])
 })
 
 test('the count has no shared part when no other account is live', async ($, on) => {
-  stubs(on, { store: SHARE_ON, ...farshid([]) })
+  stubs(on, { store: SHARE_ON, ...alex([]) })
   await start($)
   await office($)
   expect(await countText($)).toBe('1 sessions · 1 agents')
 })
 
 test('the demo replaces the other accounts too', async ($, on) => {
-  stubs(on, { store: SHARE_ON, ...farshid([entry('f1.json')], { 'f1.json': waits('f1') }) })
+  stubs(on, { store: SHARE_ON, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
   await start($)
   await office($, 'demo')
   const text = await countText($)
@@ -522,7 +522,7 @@ test('the demo replaces the other accounts too', async ($, on) => {
 })
 
 test('an oversize foreign file is not read, while a normal one next to it is', async ($, on) => {
-  const t = stubs(on, { store: SHARE_ON, ...farshid([entry('big.json', { size: 256 * 1024 + 1 }), entry('f1.json')], { 'big.json': snap('big'), 'f1.json': snap('f1') }) })
+  const t = stubs(on, { store: SHARE_ON, ...alex([entry('big.json', { size: 256 * 1024 + 1 }), entry('f1.json')], { 'big.json': snap('big'), 'f1.json': snap('f1') }) })
   await start($)
   await t.clock.advance(1100)
   expect(t.reads).toContain(`${THEIRS}/f1.json`)
@@ -532,7 +532,7 @@ test('an oversize foreign file is not read, while a normal one next to it is', a
 test('a foreign file is read only when its name, size, age, content and session id all pass', async ($, on) => {
   const t = stubs(on, {
     store: SHARE_ON,
-    ...farshid(
+    ...alex(
       [entry('ok1.json'), entry('bad name.json'), entry('old1.json', { mtimeMs: NOW - 3_700_000 }), entry('mismatch.json'), entry('torn.json'), entry('notes.txt')],
       { 'ok1.json': snap('ok1'), 'bad name.json': snap('bad name'), 'old1.json': snap('old1'), 'mismatch.json': snap('other'), 'torn.json': '{"v":1,', 'notes.txt': snap('notes') },
     ),
@@ -561,7 +561,7 @@ test('a link in place of a foreign folder or file is never listed or read', asyn
   const t = stubs(on, {
     store: SHARE_ON,
     lists: {
-      [SHARED]: [entry('pixel-agents-evil', { kind: 'other', isLink: true, size: 0, mtimeMs: 0 }), entry('pixel-agents-farshid', { kind: 'file' }), dir('pixel-agents-bob')],
+      [SHARED]: [entry('pixel-agents-evil', { kind: 'other', isLink: true, size: 0, mtimeMs: 0 }), entry('pixel-agents-alex', { kind: 'file' }), dir('pixel-agents-bob')],
       [linkDir]: [entry('e1.json')],
       [`${SHARED}/pixel-agents-bob/sessions`]: [entry('l1.json', { kind: 'other', isLink: true }), entry('b1.json')],
     },
@@ -592,7 +592,7 @@ test('foreign files never reach process.run, and an old x.json in the own shared
   const t = stubs(on, {
     store: SHARE_ON,
     lists: {
-      [SHARED]: [dir('pixel-agents-farshid'), dir('pixel-agents-u')],
+      [SHARED]: [dir('pixel-agents-alex'), dir('pixel-agents-u')],
       [THEIRS]: [entry('f1.json'), entry('f2.json', { mtimeMs: NOW - 3_700_000 }), entry('x;y.json')],
       [MINE]: [entry('x.json', { mtimeMs: NOW - 3_700_000 }), entry('old-1.json', { mtimeMs: NOW - 3_700_000 })],
     },
@@ -677,7 +677,7 @@ test('/office share toggles sharing, opens the pane, and remembers it', async ($
 })
 
 test('another session turning share off in the store makes this one remove its file, and takes nothing else from the store', async ($, on) => {
-  const t = stubs(on, { store: { prefs: { share: true, hd: false } }, ...farshid([entry('f1.json')], { 'f1.json': waits('f1') }) })
+  const t = stubs(on, { store: { prefs: { share: true, hd: false } }, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
   await start($)
   await t.clock.advance(1100)
   expect([t.runs, await countText($)]).toEqual([[], '2 sessions · 2 agents · 1 shared'])
@@ -727,7 +727,7 @@ for (const source of ['clear', 'resume', 'fork'] as const) {
 }
 
 test('a shared write that fails while the list works logs one line however many polls fail, and leaves nothing to remove', async ($, on) => {
-  const t = stubs(on, { store: SHARE_ON, failShared: true, ...farshid([entry('f1.json')], { 'f1.json': waits('f1') }) })
+  const t = stubs(on, { store: SHARE_ON, failShared: true, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
   await start($)
   for (const _ of [1, 2, 3, 4]) await t.clock.advance(1000)
   expect(t.logs.filter(l => l.includes('shared folder'))).toHaveLength(1)
