@@ -1,0 +1,8 @@
+{
+  "name": "pixel-agents-tui",
+  "owner": { "name": "Shidfar Hodizoda" },
+  "metadata": { "description": "A pixel-art office of your Claude Code agents, driven by real events" },
+  "plugins": [
+    { "name": "pixel-agents", "source": "./", "description": "A pixel-art office of your Claude Code agents, driven by real events" }
+  ]
+}

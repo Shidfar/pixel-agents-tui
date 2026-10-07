@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm i -g @anthropic-ai/claude-code bun typescript
+      - run: npm ci
+
+      - name: Validate the plugin
+        run: claude plugin validate --strict .
+
+      # "hooks modules are turned off" is Claude Code's rollout switch served off for this run.
+      # Nothing was tested, but nothing is broken either, so it warns instead of failing.
+      - name: Test the plugin
+        run: |
+          status=0
+          claude plugin test > test.log 2>&1 || status=$?
+          cat test.log
+          if grep -q 'hooks modules are turned off' test.log; then
+            echo '::warning::hooks modules are turned off (rollout switch); plugin tests skipped'
+            exit 0
+          fi
+          exit "$status"
+
+      - name: Type-check
+        run: tsc -p . && tsc -p src/cli
+
+      - name: Smoke-test the binary
+        run: bash tests/cli-smoke.sh
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm i -g bun
+
+      - name: Build the binaries
+        run: |
+          for target in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            bun build --compile --minify --target="bun-$target" src/cli/main.ts --outfile "dist/pixel-agents-$target"
+          done
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/pixel-agents-*

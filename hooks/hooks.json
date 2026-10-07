@@ -1,0 +1,1 @@
+{ "description": "pixel-agents mod", "modules": ["./register.ts"] }
