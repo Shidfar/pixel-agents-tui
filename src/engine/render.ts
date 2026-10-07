@@ -133,20 +133,20 @@ const inCloud = (x: number, y: number, n: number): boolean => {
 }
 
 // One pixel of window glass: sky, then stars at night, clouds, rain, and the lightning flash.
-const skyPixel = (x: number, y: number, top: number, bottom: number, night: boolean, sky: Scene['sky'], clouds: number, cloudColor: number): number => {
+const skyPixel = (x: number, y: number, top: number, bottom: number, night: boolean, sky: Scene['sky'], time: number, clouds: number, cloudColor: number): number => {
   if (sky.flash) return COLORS.flash
   const wet = sky.weather === 'rain' || sky.weather === 'storm' || sky.weather === 'lightning'
-  if (wet && (sky.weather !== 'rain' || x % 2 === 0) && (y + Math.floor(sky.phase * 14) + ((x * 5) % 8)) % 8 < 2) return COLORS.rain
+  if (wet && (sky.weather !== 'rain' || x % 2 === 0) && (y + Math.floor(time * 14) + ((x * 5) % 8)) % 8 < 2) return COLORS.rain
   if (clouds > 0 && inCloud(x, y, clouds)) return cloudColor
-  if (night && (sky.weather === 'clear' || sky.weather === 'clouds') && scatter(x, y) % 17 === 0 && (Math.floor(sky.phase * 2) + x) % 5 !== 0) return COLORS.star
+  if (night && (sky.weather === 'clear' || sky.weather === 'clouds') && scatter(x, y) % 17 === 0 && (Math.floor(time * 2) + x) % 5 !== 0) return COLORS.star
   return y % TILE < 7 ? top : bottom
 }
 
-const paintMonitor = (compose: Uint32Array, W: number, m: MonitorView): void => {
+const paintMonitor = (compose: Uint32Array, W: number, m: MonitorView, time: number): void => {
   const origin = m.row * TILE * W + m.col * TILE
   const bg = m.mode === 'code' ? COLORS.codeBg : COLORS.termBg
   for (const o of MONITOR_SCREEN) compose[origin + (o >> 4) * W + (o & 15)] = bg
-  const step = Math.floor(m.phase * 4)
+  const step = Math.floor(time * 4)
   for (const k of iota(3)) {
     const row = 1 + ((k * 3 + step) % 8)
     const len = 3 + ((k * 5 + step * 7) % 8)
@@ -174,8 +174,8 @@ const composeWorld = (w: World, scene: Scene, prefs: Prefs, layer: Layer): Uint3
   const [top, bottom] = skyColors(hour, scene.sky.weather)
   const night = isNight(hour)
   const [clouds, cloudColor] = CLOUDS[scene.sky.weather] ?? [0, 0]
-  for (const k of iota(clouds)) scratch.cloudX[k] = (k * 83 + Math.floor(scene.sky.phase * (2 + k) * 0.75)) % (W + 16) - 8
-  for (const at of layer.sky) out[at] = skyPixel(at % W, (at / W) | 0, top, bottom, night, scene.sky, clouds, cloudColor)
+  for (const k of iota(clouds)) scratch.cloudX[k] = (k * 83 + Math.floor(scene.time * (2 + k) * 0.75)) % (W + 16) - 8
+  for (const at of layer.sky) out[at] = skyPixel(at % W, (at / W) | 0, top, bottom, night, scene.sky, scene.time, clouds, cloudColor)
 
   if (scene.doorOpen) blit(out, W, H, tileSprite('door'), TILE, TILE, w.door.col * TILE, w.door.row * TILE)
 
@@ -193,7 +193,7 @@ const composeWorld = (w: World, scene: Scene, prefs: Prefs, layer: Layer): Uint3
     }))
   }
 
-  for (const m of scene.monitors) if (m.mode !== 'off') paintMonitor(out, W, m)
+  for (const m of scene.monitors) if (m.mode !== 'off') paintMonitor(out, W, m, scene.time)
 
   scratch.order.length = 0
   for (const c of scene.characters) scratch.order.push(c)

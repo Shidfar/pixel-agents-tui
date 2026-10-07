@@ -113,9 +113,9 @@ export type CharacterView = {
   readonly bob: number                   // px, vertical, permission bob; 0 normally
 }
 export type ParticleView = { readonly x: number; readonly y: number; readonly color: number; readonly size: 1 | 2 | 3 }
-export type MonitorView = { readonly col: number; readonly row: number; readonly mode: 'code' | 'term' | 'off'; readonly phase: number }
+export type MonitorView = { readonly col: number; readonly row: number; readonly mode: 'code' | 'term' | 'off' }
 export type Weather = 'clear' | 'clouds' | 'rain' | 'storm' | 'lightning'
-export type SkyView = { readonly hour: number; readonly weather: Weather; readonly flash: boolean; readonly phase: number }
+export type SkyView = { readonly hour: number; readonly weather: Weather; readonly flash: boolean }
 export type CatView = { readonly x: number; readonly y: number; readonly dir: Dir; readonly pose: 'walk' | 'sit' | 'sleep'; readonly frame: number }
 export type PlaneView = { readonly x: number; readonly y: number; readonly dir: Dir }
 export type Alert = { readonly sessionId: string; readonly name: string; readonly kind: 'permission' | 'question'; readonly detail: string; readonly at: number }

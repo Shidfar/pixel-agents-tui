@@ -758,7 +758,7 @@ export function createSim(world: World, seed: number): Sim {
       const c = key === undefined ? undefined : st.chars.get(key)
       const sitting = c !== undefined && c.target.kind === 'seat' && atTarget(c)
       const mode = sitting && c.agent.activity === 'typing' ? 'code' : sitting && c.agent.activity === 'running' ? 'term' : 'off'
-      return [{ col: s.monitor.col, row: s.monitor.row, mode, phase: st.time } as const]
+      return [{ col: s.monitor.col, row: s.monitor.row, mode } as const]
     })
 
   // The self agent waiting, any waiting agent, the self main if busy, any busy agent.
@@ -787,7 +787,7 @@ export function createSim(world: World, seed: number): Sim {
     monitors: monitors(),
     doorOpen: st.doorHold > 0,
     tvOn: [...st.chars.values()].some(c => c.target.kind === 'couch' && atTarget(c)),
-    sky: { hour: st.hour, weather: st.weather, flash: st.flashLeft > 0, phase: st.time },
+    sky: { hour: st.hour, weather: st.weather, flash: st.flashLeft > 0 },
     whiteboard: st.whiteboard,
     focus: focusOf(),
     alerts: st.alerts,
