@@ -57,7 +57,7 @@ const COUCHES: readonly Seat[] = [
 const WHITEBOARD_SPOT: TilePos = { col: 15, row: 6 }
 
 // Neighbor order matters: it fixes which of several equal-length paths BFS returns.
-const DIRS: readonly TilePos[] = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]
+export const DIRS: readonly TilePos[] = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]
 
 const WALKABLE = new Set<Tile>(['floor1', 'floor2', 'floor3', 'floor4', 'floor5', 'floor6', 'floor7', 'chair', 'rug', 'door', 'couch'])
 const WALL_LIKE = new Set<Tile>(['wall', 'window', 'whiteboard'])
@@ -74,13 +74,13 @@ const at = (tiles: Tiles, p: TilePos): Tile | undefined => tiles[p.row]?.[p.col]
 
 const NOT_BLOCKED: ReadonlySet<string> = new Set()
 
-const open = (tiles: Tiles, p: TilePos, blocked: ReadonlySet<string>): boolean => {
+export const open = (tiles: Tiles, p: TilePos, blocked: ReadonlySet<string>): boolean => {
   const t = at(tiles, p)
   return t !== undefined && isWalkable(t) && !blocked.has(posKey(p))
 }
 
 // Every tile for which `is` holds, row by row, left to right.
-const where = (tiles: Tiles, is: (t: Tile) => boolean): TilePos[] =>
+export const where = (tiles: Tiles, is: (t: Tile) => boolean): TilePos[] =>
   tiles.flatMap((r, row) => r.flatMap((t, col) => (is(t) ? [{ col, row }] : [])))
 
 // Walkable tiles next to a tile of the wanted kind, each listed once.
