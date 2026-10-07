@@ -353,8 +353,8 @@ async function pollShared($: Ctx, now: number) {
 // what has sat untouched for an hour.
 async function pollOwn($: Ctx, now: number) {
   try {
-    const listed = (await $.fs.list(S.dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json') && f.name !== `${S.id}.json`)
-    const old = listed.filter(f => now - f.mtimeMs > REAP_MS && isStateFile(f.name)).map(f => `${S.dir}/${f.name}`)
+    const listed = (await $.fs.list(S.dir)).filter(f => f.kind === 'file' && isStateFile(f.name) && f.name !== `${S.id}.json`)
+    const old = listed.filter(f => now - f.mtimeMs > REAP_MS).map(f => `${S.dir}/${f.name}`)
     if (old.length > 0) await $.process.run(['rm', '-f', ...old]).catch(() => undefined)
     const fresh = listed.filter(f => now - f.mtimeMs <= REAP_MS).map(f => ({ ...f, key: f.name.slice(0, -5) }))
     await refresh(S.others, fresh, async f => parseStateFile(f.name, await $.fs.read(`${S.dir}/${f.name}`)))
