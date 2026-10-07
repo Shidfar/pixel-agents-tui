@@ -1,6 +1,7 @@
-import type { On } from 'claude-code'
+import type { FsEntry, FsStat, On } from 'claude-code'
 import { expect, mock, test as kitTest } from 'claude-code/testing'
 import type { Engine, TestBody } from 'claude-code/testing'
+import { MAX_FOREIGN_BYTES } from '../src/engine/shared'
 
 const PANE = {
   plugin: 'pixel-agents', component: 'Pane', requestId: 'pixel-agents',
@@ -35,11 +36,10 @@ const test = (name: string, body: TestBody) => kitTest(name, async ($, on) => {
 // `files` is looked up by full path first, then by file name. The ownership proof is answered per path from `proof`
 // (`<uid> <mode> <type>`; this account is uid 501 and its folders are 755 Directory unless it says otherwise), or fails as `statFail` says:
 // exit 1 with nothing, garbage, exit 1 with every line, or exit 0 with only HOME's line. `proofDelayMs` holds the answer on the mock clock.
-type Entry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; mtimeMs: number; isLink: boolean }
 type Opts = {
   files?: Record<string, string>; blitDeny?: boolean; ids?: readonly string[]
   store?: Record<string, unknown>; env?: Record<string, string>; ageMs?: number; unplaced?: boolean   // used by the tests below the plan's nine
-  lists?: Record<string, readonly Entry[]>; stats?: Record<string, (Partial<Pick<Entry, 'kind' | 'isLink'>> & { realPath?: string }) | null>; failShared?: boolean
+  lists?: Record<string, readonly FsEntry[]>; stats?: Record<string, Partial<Pick<FsStat, 'kind' | 'isLink' | 'realPath'>> | null>; failShared?: boolean
   proof?: Record<string, string>; statFail?: 'exit' | 'garbage' | 'partial' | 'short'; proofDelayMs?: number   // used by the sharing tests at the end
 }
 function stubs(on: On, opts: Opts = {}) {
@@ -118,9 +118,19 @@ function stubs(on: On, opts: Opts = {}) {
   const last = () => JSON.parse(writes.filter(w => w.path.endsWith('/s1.json')).at(-1)!.text)
   return { writes, opens, toasts, blits, blitArgs, reads, runs, logs, listed, statted, stats, proofs, order, store, clock, last }
 }
+type Stubs = ReturnType<typeof stubs>
 const start = ($: Engine) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work/repo' })
 // The engine's own `$` raises command.run whole: who typed it and where it will show come with it.
 const office = ($: Engine, args = '') => $.command.run({ command: 'office', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
+
+// Other sessions' state files: `quiet` is an idle one; `snap` and `waits` build the text a test serves for a file.
+const quiet = { v: 1, sessionId: 's2', name: 'api', cwd: '/w/api', startedAt: 0, updatedAt: 1_790_000_000_000, context: { percent: null }, effects: [], nextEffectId: 1,
+  stats: { day: '2026-10-02', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 },
+  agents: [{ id: 'main', kind: 'main', label: 'api', activity: 'idle', since: 0, turnActive: false, inFlight: {} }] }
+
+const snap = (sessionId: string, over: object = {}) => JSON.stringify({ ...quiet, sessionId, ...over })
+const blocked = { activity: 'permission', detail: 'Bash: x', waiting: { kind: 'permission', tool: 'Bash', detail: 'Bash: x', at: 5 } }
+const waits = (sessionId: string) => snap(sessionId, { agents: [{ ...quiet.agents[0], ...blocked, turnActive: true }] })
 
 test('/office opens a focused pane named pixel-agents', async ($, on) => {
   const t = stubs(on)
@@ -177,10 +187,7 @@ test('the pane mounts a Raster sized to the body in the terminal, and a roster o
 })
 
 test('the band alerts about another session waiting, with one toast; never about your own', async ($, on) => {
-  const other = { v: 1, sessionId: 's2', name: 'api', cwd: '/w/api', startedAt: 0, updatedAt: 1_790_000_000_000, context: { percent: null }, effects: [], nextEffectId: 1,
-    stats: { day: '2026-10-02', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 },
-    agents: [{ id: 'main', kind: 'main', label: 'api', activity: 'permission', detail: 'Bash: x', since: 0, turnActive: true, inFlight: {}, waiting: { kind: 'permission', tool: 'Bash', detail: 'Bash: x', at: 5 } }] }
-  const t = stubs(on, { files: { 's2.json': JSON.stringify(other) } })
+  const t = stubs(on, { files: { 's2.json': waits('s2') } })
   await start($)
   await t.clock.advance(1100)
   await t.clock.advance(1100)
@@ -190,7 +197,8 @@ test('the band alerts about another session waiting, with one toast; never about
 })
 
 test('a torn file keeps the last good copy', async ($, on) => {
-  const good = JSON.stringify({ v: 1, sessionId: 's2', name: 'api', cwd: '/w', startedAt: 0, updatedAt: 1_790_000_000_000, context: { percent: null }, effects: [], nextEffectId: 1, stats: { day: '2026-10-02', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 }, agents: [{ id: 'main', kind: 'main', label: 'api', activity: 'question', detail: 'q', since: 0, turnActive: true, inFlight: {}, waiting: { kind: 'question', tool: 'AskUserQuestion', detail: 'q', at: 5 } }] })
+  const asks = { activity: 'question', detail: 'q', turnActive: true, waiting: { kind: 'question', tool: 'AskUserQuestion', detail: 'q', at: 5 } }
+  const good = snap('s2', { agents: [{ ...quiet.agents[0], ...asks }] })
   const files: Record<string, string> = { 's2.json': good }
   const t = stubs(on, { files })
   await start($)
@@ -228,10 +236,6 @@ test('/clear starts a new snapshot and ends the old one', async ($, on) => {
 })
 
 // ── beyond the plan's nine ─────────────────────────────────────────
-
-const quiet = { v: 1, sessionId: 's2', name: 'api', cwd: '/w/api', startedAt: 0, updatedAt: 1_790_000_000_000, context: { percent: null }, effects: [], nextEffectId: 1,
-  stats: { day: '2026-10-02', tools: 0, edits: 0, commits: 0, permits: 0, errors: 0 },
-  agents: [{ id: 'main', kind: 'main', label: 'api', activity: 'idle', since: 0, turnActive: false, inFlight: {} }] }
 
 test('an idle session heartbeats: updatedAt moves every 5 s, so viewers never see it as gone', async ($, on) => {
   const t = stubs(on)
@@ -444,14 +448,21 @@ test('a pane the terminal places later is open once it is drawn, and animates', 
 
 const NOW = 1_790_000_000_000
 const THEIRS = `${SHARED}/pixel-agents-alex/sessions`
-const entry = (name: string, over: Partial<Entry> = {}): Entry => ({ name, kind: 'file', size: 10, isLink: false, mtimeMs: NOW, ...over })
-const dir = (name: string): Entry => entry(name, { kind: 'dir', size: 0, mtimeMs: 0 })
-const snap = (sessionId: string, over: object = {}) => JSON.stringify({ ...quiet, sessionId, ...over })
-const blocked = { activity: 'permission', detail: 'Bash: x', waiting: { kind: 'permission', tool: 'Bash', detail: 'Bash: x', at: 5 } }
-const waits = (sessionId: string) => snap(sessionId, { agents: [{ ...quiet.agents[0], ...blocked, turnActive: true }] })
+const entry = (name: string, over: Partial<FsEntry> = {}): FsEntry => ({ name, kind: 'file', size: 10, isLink: false, mtimeMs: NOW, ...over })
+const dir = (name: string): FsEntry => entry(name, { kind: 'dir', size: 0, mtimeMs: 0 })
 const underShared = (p: string) => p.startsWith(SHARED)
+const sharedWrites = (t: Stubs) => t.writes.filter(w => underShared(w.path))
+// n polls of the 1 s timer
+const polls = async (t: Stubs, n: number) => {
+  for (const _ of Array.from({ length: n })) await t.clock.advance(1000)
+}
+// another session of this account turns sharing off in the store; the next poll sees it
+const shareOffElsewhere = async (t: Stubs) => {
+  t.store.set('prefs', { share: false })
+  await t.clock.advance(1100)
+}
 // one other account, alex, with these files; `files` maps a name to its content
-const alex = (entries: readonly Entry[], files: Record<string, string> = {}) => ({
+const alex = (entries: readonly FsEntry[], files: Record<string, string> = {}) => ({
   lists: { [SHARED]: [dir('pixel-agents-alex'), dir('pixel-agents-u'), entry('.DS_Store')], [THEIRS]: entries, [MINE]: [], '/home/u/.claude/pixel-agents/sessions': [] },
   files: Object.fromEntries(Object.entries(files).map(([name, text]) => [`${THEIRS}/${name}`, text])),
 })
@@ -468,7 +479,7 @@ test('with share off nothing is written, listed or read under /Users/Shared', as
   await start($)
   await t.clock.advance(6000)
   expect(t.writes.length).toBeGreaterThan(0)
-  expect([t.writes.some(w => underShared(w.path)), t.listed.some(underShared), t.reads.some(underShared), t.statted.some(underShared), t.runs, t.proofs]).toEqual([false, false, false, false, [], []])
+  expect([sharedWrites(t).length > 0, t.listed.some(underShared), t.reads.some(underShared), t.statted.some(underShared), t.runs, t.proofs]).toEqual([false, false, false, false, [], []])
 })
 
 for (const bad of ['yes', 1, null, {}]) {
@@ -476,7 +487,7 @@ for (const bad of ['yes', 1, null, {}]) {
     const t = stubs(on, { store: { prefs: { share: bad } }, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
     await start($)
     await t.clock.advance(6000)
-    expect([t.writes.some(w => underShared(w.path)), t.listed.some(underShared)]).toEqual([false, false])
+    expect([sharedWrites(t).length > 0, t.listed.some(underShared)]).toEqual([false, false])
   })
 }
 
@@ -521,20 +532,12 @@ test('the demo replaces the other accounts too', async ($, on) => {
   expect([text, text?.includes('shared')]).toEqual([expect.stringMatching(/^\d+ sessions · \d+ agents$/), false])
 })
 
-test('an oversize foreign file is not read, while a normal one next to it is', async ($, on) => {
-  const t = stubs(on, { store: SHARE_ON, ...alex([entry('big.json', { size: 256 * 1024 + 1 }), entry('f1.json')], { 'big.json': snap('big'), 'f1.json': snap('f1') }) })
-  await start($)
-  await t.clock.advance(1100)
-  expect(t.reads).toContain(`${THEIRS}/f1.json`)
-  expect(t.reads).not.toContain(`${THEIRS}/big.json`)
-})
-
-test('a foreign file is read only when its name, size, age, content and session id all pass', async ($, on) => {
+test('a foreign file is read only when its name, size (an oversize one is never read), age, content and session id all pass', async ($, on) => {
   const t = stubs(on, {
     store: SHARE_ON,
     ...alex(
-      [entry('ok1.json'), entry('bad name.json'), entry('old1.json', { mtimeMs: NOW - 3_700_000 }), entry('mismatch.json'), entry('torn.json'), entry('notes.txt')],
-      { 'ok1.json': snap('ok1'), 'bad name.json': snap('bad name'), 'old1.json': snap('old1'), 'mismatch.json': snap('other'), 'torn.json': '{"v":1,', 'notes.txt': snap('notes') },
+      [entry('ok1.json'), entry('big.json', { size: MAX_FOREIGN_BYTES + 1 }), entry('bad name.json'), entry('old1.json', { mtimeMs: NOW - 3_700_000 }), entry('mismatch.json'), entry('torn.json'), entry('notes.txt')],
+      { 'ok1.json': snap('ok1'), 'big.json': snap('big'), 'bad name.json': snap('bad name'), 'old1.json': snap('old1'), 'mismatch.json': snap('other'), 'torn.json': '{"v":1,', 'notes.txt': snap('notes') },
     ),
   })
   await start($)
@@ -556,36 +559,28 @@ test('your own pixel-agents-u folder is never read as foreign', async ($, on) =>
   expect([t.reads, await countText($), t.toasts]).toEqual([[], '1 sessions · 1 agents', []])
 })
 
-test('a link in place of a foreign folder or file is never listed or read', async ($, on) => {
+test('a link or a non-folder in place of a foreign folder, its sessions folder or a file is never listed or read', async ($, on) => {
   const linkDir = `${SHARED}/pixel-agents-evil/sessions`
+  const [linked, plain] = [`${SHARED}/pixel-agents-x/sessions`, `${SHARED}/pixel-agents-y/sessions`]
+  const bob = `${SHARED}/pixel-agents-bob/sessions`
   const t = stubs(on, {
     store: SHARE_ON,
     lists: {
-      [SHARED]: [entry('pixel-agents-evil', { kind: 'other', isLink: true, size: 0, mtimeMs: 0 }), entry('pixel-agents-alex', { kind: 'file' }), dir('pixel-agents-bob')],
+      [SHARED]: [entry('pixel-agents-evil', { kind: 'other', isLink: true, size: 0, mtimeMs: 0 }), entry('pixel-agents-alex', { kind: 'file' }), dir('pixel-agents-x'), dir('pixel-agents-y'), dir('pixel-agents-bob')],
       [linkDir]: [entry('e1.json')],
-      [`${SHARED}/pixel-agents-bob/sessions`]: [entry('l1.json', { kind: 'other', isLink: true }), entry('b1.json')],
+      [linked]: [entry('x1.json')],
+      [plain]: [entry('y1.json')],
+      [bob]: [entry('l1.json', { kind: 'other', isLink: true }), entry('b1.json')],
     },
-    files: { [`${linkDir}/e1.json`]: snap('e1'), [`${SHARED}/pixel-agents-bob/sessions/l1.json`]: snap('l1'), [`${SHARED}/pixel-agents-bob/sessions/b1.json`]: snap('b1') },
+    stats: { [linked]: { kind: 'dir', isLink: true }, [plain]: { kind: 'file' } },
+    files: { [`${linkDir}/e1.json`]: snap('e1'), [`${linked}/x1.json`]: snap('x1'), [`${plain}/y1.json`]: snap('y1'), [`${bob}/l1.json`]: snap('l1'), [`${bob}/b1.json`]: snap('b1') },
   })
   await start($)
   await t.clock.advance(1100)
   expect(t.listed).not.toContain(linkDir)
   expect(t.listed).not.toContain(THEIRS)
-  expect(t.reads).toEqual([`${SHARED}/pixel-agents-bob/sessions/b1.json`])
-})
-
-test('a foreign sessions folder that is a link, or not a folder, is never listed and none of its files are read', async ($, on) => {
-  const [linked, plain] = [`${SHARED}/pixel-agents-x/sessions`, `${SHARED}/pixel-agents-y/sessions`]
-  const t = stubs(on, {
-    store: SHARE_ON,
-    lists: { [SHARED]: [dir('pixel-agents-x'), dir('pixel-agents-y'), dir('pixel-agents-bob')], [linked]: [entry('x1.json')], [plain]: [entry('y1.json')], [`${SHARED}/pixel-agents-bob/sessions`]: [entry('b1.json')] },
-    stats: { [linked]: { kind: 'dir', isLink: true }, [plain]: { kind: 'file' } },
-    files: { [`${linked}/x1.json`]: snap('x1'), [`${plain}/y1.json`]: snap('y1'), [`${SHARED}/pixel-agents-bob/sessions/b1.json`]: snap('b1') },
-  })
-  await start($)
-  await t.clock.advance(1100)
   expect([t.listed.includes(linked), t.listed.includes(plain)]).toEqual([false, false])
-  expect(t.reads).toEqual([`${SHARED}/pixel-agents-bob/sessions/b1.json`])
+  expect(t.reads).toEqual([`${bob}/b1.json`])
 })
 
 test('foreign files never reach process.run, and an old x.json in the own shared folder is neither removed nor listed', async ($, on) => {
@@ -614,8 +609,8 @@ for (const [why, over] of unsafe) {
   test(`an own shared folder that is ${why} gets no write and no rm, and one debug line`, async ($, on) => {
     const t = stubs(on, { store: SHARE_ON, stats: { [MINE]: over } })
     await start($)
-    for (const _ of [1, 2, 3, 4]) await t.clock.advance(1000)
-    expect([t.writes.some(w => underShared(w.path)), t.runs, t.logs.filter(l => l.includes('shared folder')).length]).toEqual([false, [], 1])
+    await polls(t, 4)
+    expect([sharedWrites(t).length > 0, t.runs, t.logs.filter(l => l.includes('shared folder')).length]).toEqual([false, [], 1])
   })
 }
 
@@ -625,8 +620,7 @@ test('an own shared folder that turns into a link after a write gets no rm when 
   await t.clock.advance(1100)
   expect(t.writes.some(w => w.path === `${MINE}/s1.json`)).toBe(true)
   t.stats[MINE] = { isLink: true, realPath: '/Users/u/.claude' }
-  t.store.set('prefs', { share: false })
-  await t.clock.advance(1100)
+  await shareOffElsewhere(t)
   expect([t.runs, t.logs.filter(l => l.includes('shared folder')).length]).toEqual([[], 1])
 })
 
@@ -647,12 +641,12 @@ test('turning s off removes this session\'s shared file and nothing else, and it
   await term.press({ key: 's' })
   await t.clock.advance(1100)
   expect(t.runs).toEqual([['rm', '-f', `${MINE}/s1.json`]])
-  const sharedWrites = t.writes.filter(w => underShared(w.path)).length
+  const before = sharedWrites(t).length
   await t.clock.advance(6000)
-  expect([t.runs.length, t.writes.filter(w => underShared(w.path)).length]).toEqual([1, sharedWrites])
+  expect([t.runs.length, sharedWrites(t).length]).toEqual([1, before])
   await term.press({ key: 's' })
   await t.clock.advance(6000)
-  expect(t.writes.filter(w => underShared(w.path)).length).toBeGreaterThan(sharedWrites)
+  expect(sharedWrites(t).length).toBeGreaterThan(before)
 })
 
 test('the share button sits between hd and demo', async ($, on) => {
@@ -692,7 +686,7 @@ test('another session turning share off in the store makes this one remove its f
 test('a missing /Users/Shared throws nothing and logs one line however many polls fail', async ($, on) => {
   const t = stubs(on, { store: SHARE_ON, lists: {}, failShared: true })
   await start($)
-  for (const _ of [1, 2, 3, 4]) await t.clock.advance(1000)
+  await polls(t, 4)
   expect(t.logs.filter(l => l.includes('shared folder'))).toHaveLength(1)
   // the own state file is a separate matter and still gets written
   expect([t.writes.some(w => w.path === '/home/u/.claude/pixel-agents/sessions/s1.json'), t.logs.some(l => l.includes('could not write the state file'))]).toEqual([true, false])
@@ -707,7 +701,7 @@ test('session.end with sharing on writes only the own file, then removes this se
   expect(t.writes.slice(writes).map(w => [w.path, JSON.parse(w.text).endedAt !== undefined])).toEqual([['/home/u/.claude/pixel-agents/sessions/s1.json', true]])
   expect([t.reads.length - reads, t.statted.length - stats, t.runs.slice(runs)]).toEqual([0, 1, [['rm', '-f', `${MINE}/s1.json`]]])
   // no ended snapshot ever went to the shared folder
-  expect(t.writes.filter(w => underShared(w.path) && JSON.parse(w.text).endedAt !== undefined)).toEqual([])
+  expect(sharedWrites(t).filter(w => JSON.parse(w.text).endedAt !== undefined)).toEqual([])
 })
 
 for (const source of ['clear', 'resume', 'fork'] as const) {
@@ -718,10 +712,9 @@ for (const source of ['clear', 'resume', 'fork'] as const) {
     await t.clock.advance(1100)
     await $.classic.SessionStart({ source })
     await t.clock.advance(1100)
-    const shared = t.writes.filter(w => underShared(w.path))
+    const shared = sharedWrites(t)
     expect([t.runs, shared.some(w => w.path === `${MINE}/s9.json`), shared.some(w => JSON.parse(w.text).endedAt !== undefined)]).toEqual([[['rm', '-f', `${MINE}/s1.json`]], true, false])
-    t.store.set('prefs', { share: false })
-    await t.clock.advance(1100)
+    await shareOffElsewhere(t)
     expect(t.runs.at(-1)).toEqual(['rm', '-f', `${MINE}/s9.json`])
   })
 }
@@ -729,13 +722,12 @@ for (const source of ['clear', 'resume', 'fork'] as const) {
 test('a shared write that fails while the list works logs one line however many polls fail, and leaves nothing to remove', async ($, on) => {
   const t = stubs(on, { store: SHARE_ON, failShared: true, ...alex([entry('f1.json')], { 'f1.json': waits('f1') }) })
   await start($)
-  for (const _ of [1, 2, 3, 4]) await t.clock.advance(1000)
+  await polls(t, 4)
   expect(t.logs.filter(l => l.includes('shared folder'))).toHaveLength(1)
   await office($)
   expect(await countText($)).toBe('2 sessions · 2 agents · 1 shared')
   // nothing was written, so sharing off has no file to remove
-  t.store.set('prefs', { share: false })
-  await t.clock.advance(1100)
+  await shareOffElsewhere(t)
   expect(t.runs).toEqual([])
 })
 
@@ -758,16 +750,15 @@ const refused = [
   ['a link to somewhere else', { [MINE]: '501 755 Symbolic Link' }],
   ['a plain file', { [MINE]: '501 644 Regular File' }],
 ] as const
-const refusal = (t: ReturnType<typeof stubs>) => t.logs.filter(l => l.includes('not this account\'s own folder'))
+const refusal = (t: Stubs) => t.logs.filter(l => l.includes('not this account\'s own folder'))
 
 for (const [why, proof] of refused) {
   test(`an own shared folder that is ${why} is refused: no shared write, no rm, one debug line, one proof`, async ($, on) => {
     const t = stubs(on, { store: SHARE_ON, proof })
     await start($)
-    for (const _ of [1, 2, 3, 4]) await t.clock.advance(1000)
-    t.store.set('prefs', { share: false })
-    await t.clock.advance(1100)
-    expect([t.writes.some(w => underShared(w.path)), t.runs, refusal(t).length, t.proofs.length]).toEqual([false, [], 1, 1])
+    await polls(t, 4)
+    await shareOffElsewhere(t)
+    expect([sharedWrites(t).length > 0, t.runs, refusal(t).length, t.proofs.length]).toEqual([false, [], 1, 1])
   })
 }
 
@@ -776,44 +767,37 @@ for (const [statFail, what] of unproven) {
   test(`a proof that ends with ${what} is refused`, async ($, on) => {
     const t = stubs(on, { store: SHARE_ON, statFail })
     await start($)
-    for (const _ of [1, 2, 3, 4]) await t.clock.advance(1000)
-    expect([t.writes.some(w => underShared(w.path)), t.runs, refusal(t).length]).toEqual([false, [], 1])
+    await polls(t, 4)
+    expect([sharedWrites(t).length > 0, t.runs, refusal(t).length]).toEqual([false, [], 1])
   })
 }
 
-test('folders that exist are proven before the first write and after it, and then no more stat processes run', async ($, on) => {
+// Which folders exist decides what the first proof names. Right after the first write both are proven, once; then they
+// are trusted, sharing carries on without another stat process, and turning it off removes the file.
+const proofOrder = [
   // 700 is fine: nobody but the owner can write
-  const t = stubs(on, { store: SHARE_ON, proof: { [MINE]: '501 700 Directory' } })
-  await start($)
-  expect(t.order.slice(0, 3)).toEqual([`proof ${PARENT} ${MINE}`, `write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`])
-  for (const _ of [1, 2, 3, 4, 5, 6]) await t.clock.advance(1000)
-  expect([t.proofs.length, t.writes.filter(w => underShared(w.path)).length > 1, refusal(t)]).toEqual([2, true, []])
-})
-
-test('only the folder that exists is proven before the first write', async ($, on) => {
-  const t = stubs(on, { store: SHARE_ON, stats: { [MINE]: null } })
-  await start($)
-  expect(t.order.slice(0, 3)).toEqual([`proof ${PARENT}`, `write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`])
-})
-
-test('missing folders: the write goes ahead, the proof runs right after it, the folders are trusted from then on, and sharing off removes the file', async ($, on) => {
-  const t = stubs(on, { store: SHARE_ON, stats: { [PARENT]: null, [MINE]: null } })
-  await start($)
-  for (const _ of [1, 2, 3, 4, 5, 6]) await t.clock.advance(1000)
-  expect(t.order.slice(0, 2)).toEqual([`write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`])
-  expect([t.proofs.length, t.writes.filter(w => underShared(w.path)).length > 1]).toEqual([1, true])
-  t.store.set('prefs', { share: false })
-  await t.clock.advance(1100)
-  expect(t.runs).toEqual([['rm', '-f', `${MINE}/s1.json`]])
-})
+  ['both folders exist', { proof: { [MINE]: '501 700 Directory' } }, [`proof ${PARENT} ${MINE}`, `write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`], 2],
+  ['only the parent exists', { stats: { [MINE]: null } }, [`proof ${PARENT}`, `write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`], 2],
+  ['neither exists', { stats: { [PARENT]: null, [MINE]: null } }, [`write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`], 1],
+] as const
+for (const [why, over, order, proofs] of proofOrder) {
+  test(`${why}: only the folders that exist are proven before the first write, both right after it, and then no more stat processes run`, async ($, on) => {
+    const t = stubs(on, { store: SHARE_ON, ...over })
+    await start($)
+    await polls(t, 6)
+    expect(t.order.slice(0, order.length)).toEqual(order)
+    expect([t.proofs.length, sharedWrites(t).length > 1, refusal(t)]).toEqual([proofs, true, []])
+    await shareOffElsewhere(t)
+    expect(t.runs).toEqual([['rm', '-f', `${MINE}/s1.json`]])
+  })
+}
 
 test('folders that turn out not to be ours right after the first write are refused, that file is left alone, and sharing off removes nothing', async ($, on) => {
   const t = stubs(on, { store: SHARE_ON, stats: { [PARENT]: null, [MINE]: null }, proof: { [PARENT]: '502 755 Directory' } })
   await start($)
-  for (const _ of [1, 2, 3, 4, 5, 6]) await t.clock.advance(1000)
-  expect([t.order.slice(0, 2), t.writes.filter(w => underShared(w.path)).length, refusal(t).length]).toEqual([[`write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`], 1, 1])
-  t.store.set('prefs', { share: false })
-  await t.clock.advance(1100)
+  await polls(t, 6)
+  expect([t.order.slice(0, 2), sharedWrites(t).length, refusal(t).length]).toEqual([[`write ${MINE}/s1.json`, `proof ${PARENT} ${MINE}`], 1, 1])
+  await shareOffElsewhere(t)
   expect(t.runs).toEqual([])
 })
 
