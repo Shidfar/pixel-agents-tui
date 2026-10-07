@@ -39,7 +39,6 @@ const S = {
   sharedFile: '',   // this session's file in the shared folder, set once a write to it succeeded; '' once removed
   sharedOwned: false,   // R14: the shared folders are proven to be this account's, for the rest of the session
   sharedRefused: false,   // R14: they are not: no shared write and no rm under /Users/Shared any more
-  sharedWarned: false,
   snap: null as Snapshot | null,
   others: new Map<string, Seen>(),   // by session id
   foreign: new Map<string, Seen>(),   // by `account:id`, which is the session id asForeign gives it
@@ -52,7 +51,7 @@ const S = {
   tickN: 0,
   lastTickAt: 0,
   lastPublish: 0,
-  writeWarned: false,
+  warned: new Set<string>(),   // problems already said in the debug log, by key
   dirty: false,
   rosterSig: 0,   // the roster's words, hashed, to tell when it needs redrawing
   prev: null as Uint8Array | Uint32Array | null,   // the last frame drawn, to tell when a new one differs; null forces a send
@@ -81,6 +80,13 @@ const readPrefs = (raw: unknown): Prefs => {
     paneOpen: bool('paneOpen'),
     share: bool('share'),
   }
+}
+
+// No pane: nothing is open and no mounted size is known, so nothing is blitted.
+function resetPane() {
+  S.pane.open = false
+  S.pane.cols = 0
+  S.pane.rows = 0
 }
 
 // While the demo runs it stands in for the other sessions, other accounts' included.
@@ -148,12 +154,15 @@ function debug($: Ctx, text: string) {
   $.ui.log(LOG + text, { to: 'debug' })
 }
 
-// D9: one line however many polls or writes fail; `writeWarned` stays about the own state file.
-function sharedUnusable($: Ctx, err: unknown) {
-  if (S.sharedWarned) return
-  S.sharedWarned = true
-  debug($, `the shared folder is not usable: ${String(err)}`)
+// A problem is said once, however often it comes back.
+function warnOnce($: Ctx, key: string, text: string) {
+  if (S.warned.has(key)) return
+  S.warned.add(key)
+  debug($, text)
 }
+
+// D9: one line however many polls or writes fail; the key 'write' stays about the own state file.
+const sharedUnusable = ($: Ctx, err: unknown) => warnOnce($, 'shared', `the shared folder is not usable: ${String(err)}`)
 
 // R13: /Users/Shared is world-writable, so another account may have made our shared folder before we
 // did, or put a link in it. Only a missing folder (the write makes it) or the plain folder itself is used.
@@ -206,7 +215,8 @@ async function dropShared($: Ctx) {
   if (S.sharedOwned && (await sharedSafe($))) await $.process.run(['rm', '-f', file]).catch(() => undefined)
 }
 
-async function savePrefs($: Ctx) {
+async function setPrefs($: Ctx, over: Partial<Prefs>) {
+  S.prefs = { ...S.prefs, ...over }
   try {
     await $.store.set('prefs', S.prefs)
   } catch (err) {
@@ -216,15 +226,13 @@ async function savePrefs($: Ctx) {
 
 // Writes at most 4 times a second when something changed, and every 5 s regardless: the
 // heartbeat has to move updatedAt too, or an idle session would look gone after 20 s.
-async function publish($: Ctx, force: boolean) {
+async function publish($: Ctx, now: number, force: boolean) {
   if (!S.snap || !S.dir) return
   const file = `${S.snap.sessionId}.json`
   if (!isStateFile(file)) {
-    if (!S.writeWarned) debug($, `not writing a state file named ${JSON.stringify(file)}`)
-    S.writeWarned = true
+    warnOnce($, 'write', `not writing a state file named ${JSON.stringify(file)}`)
     return
   }
-  const now = await $.clock.now()
   const due = force || (S.dirty && now - S.lastPublish >= 250) || now - S.lastPublish >= 5000
   if (!due || !S.snap) return
   S.snap = { ...S.snap, updatedAt: now }
@@ -233,8 +241,7 @@ async function publish($: Ctx, force: boolean) {
   try {
     await $.fs.write(`${S.dir}/${file}`, JSON.stringify(S.snap))
   } catch (err) {
-    if (!S.writeWarned) debug($, `could not write the state file: ${String(err)}`)
-    S.writeWarned = true
+    warnOnce($, 'write', `could not write the state file: ${String(err)}`)
   }
   // an ended snapshot is never shared: the file goes when the session stops publishing it (end, /clear, resume, fork)
   if (S.snap.endedAt !== undefined) {
@@ -260,7 +267,7 @@ async function apply($: Ctx, bare: Bare, force = false) {
   const ev = { ...bare, now } as TruthEvent
   S.snap = prune(reduce(S.snap, ev, { day: dayOf(now) }), now)
   S.dirty = true
-  await publish($, force)
+  await publish($, now, force)
 }
 
 // A subagent we never saw spawn (the module reloaded mid-turn, or the spawn raced) gets its label from the engine.
@@ -336,15 +343,14 @@ async function pollShared($: Ctx, now: number) {
 // The only reader of other sessions: keep the last good copy of each file, drop what is gone,
 // and delete what has sat untouched for an hour. Then raise an alert for each new wait.
 async function poll($: Ctx) {
-  await syncShare($)
-  await publish($, false)
-  if (!S.dir) return
   const now = await $.clock.now()
+  await syncShare($)
+  await publish($, now, false)
+  if (!S.dir) return
   try {
     const listed = (await $.fs.list(S.dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json') && f.name !== `${S.id}.json`)
-    for (const old of listed.filter(f => now - f.mtimeMs > REAP_MS && isStateFile(f.name))) {
-      await $.process.run(['rm', '-f', `${S.dir}/${old.name}`]).catch(() => undefined)
-    }
+    const old = listed.filter(f => now - f.mtimeMs > REAP_MS && isStateFile(f.name)).map(f => `${S.dir}/${f.name}`)
+    if (old.length > 0) await $.process.run(['rm', '-f', ...old]).catch(() => undefined)
     const fresh = listed.filter(f => now - f.mtimeMs <= REAP_MS).map(f => ({ ...f, key: f.name.slice(0, -5) }))
     await refresh(S.others, fresh, async f => parseStateFile(f.name, await $.fs.read(`${S.dir}/${f.name}`)))
   } catch {
@@ -371,7 +377,7 @@ async function beginSession($: Ctx, id: string) {
   S.snap = initialSnapshot({ sessionId: id, name: sessionName(cwd, repo?.root ?? null, taken), cwd, now, day: dayOf(now) })
   S.knownAgents.clear()
   S.dirty = true
-  await publish($, true)
+  await publish($, now, true)
 }
 
 async function openPane($: Ctx) {
@@ -385,17 +391,13 @@ async function openPane($: Ctx) {
   S.sim?.settle()
   S.cam = null
   S.pane.open = true
-  S.prefs = { ...S.prefs, paneOpen: true }
-  await savePrefs($)
+  await setPrefs($, { paneOpen: true })
 }
 
 async function closePane($: Ctx) {
   await $.ui.close({ id: PANE_ID })
-  S.pane.open = false
-  S.pane.cols = 0
-  S.pane.rows = 0
-  S.prefs = { ...S.prefs, paneOpen: false }
-  await savePrefs($)
+  resetPane()
+  await setPrefs($, { paneOpen: false })
 }
 
 // A refused blit means the mounted size is not the one we drew for. Stop blitting until the
@@ -443,8 +445,7 @@ async function tick($: Ctx) {
 // The control row under the picture. Each press saves the prefs and asks for a redraw.
 function controls($: Ctx, { Box, Button, Text }: Pick<Els, 'Box' | 'Button' | 'Text'>, now: number) {
   const set = async (over: Partial<Prefs>) => {
-    S.prefs = { ...S.prefs, ...over }
-    await savePrefs($)
+    await setPrefs($, over)
     $.ui.invalidate('ui.render')
   }
   const btn = (key: string, label: string, onPress: () => Promise<void>) => Button({ key, hotkey: key, label, plain: true, onPress })
@@ -481,8 +482,7 @@ export function register(on: On) {
     const id = await $.session.id()
     S.prefs = readPrefs(await $.store.get('prefs'))
     if (S.prefs.hd === null) {
-      S.prefs = { ...S.prefs, hd: term === 'ghostty' || !!kitty }
-      await savePrefs($)
+      await setPrefs($, { hd: term === 'ghostty' || !!kitty })
     }
     S.id = id
     await poll($)
@@ -604,8 +604,7 @@ export function register(on: On) {
       S.demoT0 = S.demoT0 === null ? await $.clock.now() : null
       await openPane($)
     } else if (arg === 'share') {
-      S.prefs = { ...S.prefs, share: !S.prefs.share }
-      await savePrefs($)
+      await setPrefs($, { share: !S.prefs.share })
       await openPane($)
     } else if (S.pane.open) {
       await closePane($)
@@ -618,13 +617,8 @@ export function register(on: On) {
   on('ui.close', async ($, e, next) => {
     const r = await next(e)
     if (e.id === PANE_ID) {
-      S.pane.open = false
-      S.pane.cols = 0
-      S.pane.rows = 0
-      if (e.origin.kind === 'person') {
-        S.prefs = { ...S.prefs, paneOpen: false }
-        await savePrefs($)
-      }
+      resetPane()
+      if (e.origin.kind === 'person') await setPrefs($, { paneOpen: false })
     }
     return r
   })

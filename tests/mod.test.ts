@@ -330,6 +330,12 @@ test('a file untouched for an hour is deleted, and not read', async ($, on) => {
   expect(t.reads).toEqual([])
 })
 
+test('files untouched for an hour go in one rm, and only state-file names are in it', async ($, on) => {
+  const t = stubs(on, { files: { 'old-1.json': JSON.stringify(quiet), 'old-2.json': JSON.stringify(quiet), 'x;y.json': JSON.stringify(quiet) }, ageMs: 3_700_000 })
+  await start($)
+  expect(t.runs).toEqual([['rm', '-f', '/home/u/.claude/pixel-agents/sessions/old-1.json', '/home/u/.claude/pixel-agents/sessions/old-2.json']])
+})
+
 test('a second session in the same repo is named repo-2; an ended one does not take the name', async ($, on) => {
   const t = stubs(on, { files: { 's2.json': JSON.stringify({ ...quiet, name: 'repo' }), 's3.json': JSON.stringify({ ...quiet, sessionId: 's3', name: 'repo', endedAt: 1_790_000_000_000 }) } })
   await start($)
