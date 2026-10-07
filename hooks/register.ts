@@ -6,27 +6,22 @@ import type { Elements, EngineInterface, On, UiBlitArgs } from 'claude-code'
 import { demoSnapshots } from '../src/engine/demo'
 import { encodeCells, toCells, toRgba, updateCamera } from '../src/engine/render'
 import { hashString } from '../src/engine/rng'
-import { SHARED_ROOT, accountOf, asForeign, foreignAccount, forShare, pickForeign, sharedDir } from '../src/engine/shared'
+import { SHARED_ROOT, accountOf, foreignAccount, forShare, fromShared, pickForeign, sharedDir, sharedFolder } from '../src/engine/shared'
 import { createSim } from '../src/engine/sim'
 import type { Sim } from '../src/engine/sim'
-import { alertsFor, isStale, parseSnapshot, sessionName } from '../src/engine/snapshots'
+import { REAP_MS, SESSIONS_PARTS, alertsFor, isStale, isStateFile, parseStateFile, sessionName } from '../src/engine/snapshots'
 import { initialSnapshot, prune, reduce } from '../src/engine/truth'
-import { DEFAULT_PREFS } from '../src/engine/types'
-import type { Alert, Camera, CameraMode, Prefs, Snapshot, ThemeName, TruthEvent } from '../src/engine/types'
+import { CAMERAS, DEFAULT_PREFS, THEMES, isCamera, isTheme } from '../src/engine/types'
+import type { Alert, Bare, Camera, Prefs, Snapshot, TruthEvent } from '../src/engine/types'
 import { defaultWorld } from '../src/engine/world'
+import { MAX_DT, cycle, dayOf, hourOf } from '../src/shell/common'
 
 type Ctx = EngineInterface
 type Els = Elements['terminal']
-type Bare = TruthEvent extends infer E ? (E extends { readonly now: number } ? Omit<E, 'now'> : never) : never
 
 const PANE_ID = 'pixel-agents'
 const LOG = 'pixel-agents: '
-const HOUR_MS = 3_600_000
 const BLIT_BACKOFF_MS = 1000
-// A session id becomes a file name, here and in the `rm` of old files: only these names are touched.
-const STATE_FILE = /^[A-Za-z0-9-]+\.json$/
-const THEMES: readonly ThemeName[] = ['default', 'warm', 'cool', 'dark', 'light']
-const CAMERAS: readonly CameraMode[] = ['auto', 'fit', 'x2', 'x1']
 const WORLD = defaultWorld()
 
 // All module state lives here; a reload empties it and the next events rebuild it.
@@ -36,6 +31,7 @@ const S = {
   home: '',
   dir: '',
   account: null as string | null,
+  sharedFolder: '',   // /Users/Shared/pixel-agents-<account>, the parent of sharedDir
   sharedDir: '',
   sharedFile: '',   // this session's file in the shared folder, set once a write to it succeeded; '' once removed
   sharedOwned: false,   // R14: the shared folders are proven to be this account's, for the rest of the session
@@ -66,19 +62,9 @@ const S = {
 // ── helpers that do not touch `$` ──────────────────────────────────
 
 const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n))
-const pad2 = (n: number): string => String(n).padStart(2, '0')
-const dayOf = (now: number): string => {
-  const d = new Date(now)
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-}
-const hourOf = (now: number): number => {
-  const d = new Date(now)
-  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600
-}
 // FNV-1a over 32-bit words: enough to tell two frames apart.
 const hash32 = (w: Uint32Array): number => w.reduce((h, x) => Math.imul(h ^ x, 16777619) >>> 0, 2166136261)
 const hashRgba = (px: Uint8Array): number => hash32(new Uint32Array(px.buffer, px.byteOffset, px.byteLength >> 2))
-const cycle = <T>(xs: readonly T[], x: T): T => xs[(xs.indexOf(x) + 1) % xs.length]!
 const alertKey = (a: Alert): string => `${a.sessionId}|${a.kind}|${a.at}`
 
 // A bad or old store value must not reach the renderer: take each field only if it has the right type.
@@ -86,8 +72,8 @@ const readPrefs = (raw: unknown): Prefs => {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
   const bool = (k: 'labels' | 'effects' | 'paneOpen' | 'share'): boolean => (typeof r[k] === 'boolean' ? (r[k] as boolean) : DEFAULT_PREFS[k])
   return {
-    theme: THEMES.find(t => t === r.theme) ?? DEFAULT_PREFS.theme,
-    camera: CAMERAS.find(c => c === r.camera) ?? DEFAULT_PREFS.camera,
+    theme: isTheme(r.theme) ? r.theme : DEFAULT_PREFS.theme,
+    camera: isCamera(r.camera) ? r.camera : DEFAULT_PREFS.camera,
     labels: bool('labels'),
     effects: bool('effects'),
     hd: typeof r.hd === 'boolean' ? r.hd : null,
@@ -157,8 +143,6 @@ async function sharedSafe($: Ctx): Promise<boolean> {
   return false
 }
 
-const sharedParent = (): string => S.sharedDir.slice(0, S.sharedDir.lastIndexOf('/'))
-
 // R14: a plain folder that another account made first passes the checks above, and it can then swap our file
 // for a link. So the folders must be proven ours: `stat -f` does not follow links, the type may hold a space
 // (`Symbolic Link`), and nobody but the owner may write. HOME's own line gives the uid to compare with.
@@ -175,12 +159,12 @@ async function ownProof($: Ctx, folders: readonly string[]): Promise<boolean> {
 function sharedRefuse($: Ctx) {
   S.sharedRefused = true
   S.sharedFile = ''
-  sharedUnusable($, new Error(`${sharedParent()} is not this account's own folder; delete it so it can be made again`))
+  sharedUnusable($, new Error(`${S.sharedFolder} is not this account's own folder; delete it so it can be made again`))
 }
 
 // Before the first shared write each of the two folders that exists must pass (a missing one is made by the write).
 async function ownedBeforeWrite($: Ctx): Promise<boolean> {
-  const there = (await Promise.all([sharedParent(), S.sharedDir].map(p => $.fs.stat(p).then(() => [p], () => [] as string[])))).flat()
+  const there = (await Promise.all([S.sharedFolder, S.sharedDir].map(p => $.fs.stat(p).then(() => [p], () => [] as string[])))).flat()
   if (there.length === 0 || (await ownProof($, there))) return true
   sharedRefuse($)
   return false
@@ -188,7 +172,7 @@ async function ownedBeforeWrite($: Ctx): Promise<boolean> {
 
 // Right after it both must exist and pass; then they are trusted, and no more stat processes run.
 async function ownedAfterWrite($: Ctx) {
-  if (await ownProof($, [sharedParent(), S.sharedDir])) S.sharedOwned = true
+  if (await ownProof($, [S.sharedFolder, S.sharedDir])) S.sharedOwned = true
   else sharedRefuse($)
 }
 
@@ -214,7 +198,7 @@ async function savePrefs($: Ctx) {
 async function publish($: Ctx, force: boolean) {
   if (!S.snap || !S.dir) return
   const file = `${S.snap.sessionId}.json`
-  if (!STATE_FILE.test(file)) {
+  if (!isStateFile(file)) {
     if (!S.writeWarned) debug($, `not writing a state file named ${JSON.stringify(file)}`)
     S.writeWarned = true
     return
@@ -315,8 +299,8 @@ async function pollShared($: Ctx, now: number) {
   for (const key of [...S.foreign.keys()]) if (!keys.has(key)) S.foreign.delete(key)
   await Promise.all(picked.filter(f => S.foreign.get(keyOf(f))?.mtimeMs !== f.mtimeMs).map(async f => {
     try {
-      const snap = parseSnapshot(await $.fs.read(`${sharedDir(f.account)}/${f.name}`))
-      if (snap && snap.sessionId === f.name.slice(0, -5)) S.foreign.set(keyOf(f), { snap: asForeign(snap, f.account), mtimeMs: f.mtimeMs })
+      const snap = fromShared(f.name, await $.fs.read(`${sharedDir(f.account)}/${f.name}`), f.account)
+      if (snap) S.foreign.set(keyOf(f), { snap, mtimeMs: f.mtimeMs })
     } catch {
       // unreadable right now: the last good copy stays
     }
@@ -332,17 +316,17 @@ async function poll($: Ctx) {
   const now = await $.clock.now()
   try {
     const listed = (await $.fs.list(S.dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json') && f.name !== `${S.id}.json`)
-    for (const old of listed.filter(f => now - f.mtimeMs > HOUR_MS && STATE_FILE.test(f.name))) {
+    for (const old of listed.filter(f => now - f.mtimeMs > REAP_MS && isStateFile(f.name))) {
       await $.process.run(['rm', '-f', `${S.dir}/${old.name}`]).catch(() => undefined)
     }
-    const fresh = listed.filter(f => now - f.mtimeMs <= HOUR_MS)
+    const fresh = listed.filter(f => now - f.mtimeMs <= REAP_MS)
     const names = new Set(fresh.map(f => f.name.slice(0, -5)))
     for (const id of [...S.others.keys()]) if (!names.has(id)) S.others.delete(id)
     await Promise.all(fresh.filter(f => S.others.get(f.name.slice(0, -5))?.mtimeMs !== f.mtimeMs).map(async f => {
       const id = f.name.slice(0, -5)
       try {
-        const snap = parseSnapshot(await $.fs.read(`${S.dir}/${f.name}`))
-        if (snap && snap.sessionId === id) S.others.set(id, { snap, mtimeMs: f.mtimeMs })
+        const snap = parseStateFile(f.name, await $.fs.read(`${S.dir}/${f.name}`))
+        if (snap) S.others.set(id, { snap, mtimeMs: f.mtimeMs })
       } catch {
         // unreadable right now: the last good copy stays
       }
@@ -427,7 +411,7 @@ async function tick($: Ctx) {
       return
     }
     if (S.pane.cols === 0 || now < S.blitRetryAt) return
-    const dt = clamp((now - S.lastTickAt) / 1000, 0, 0.2)
+    const dt = clamp((now - S.lastTickAt) / 1000, 0, MAX_DT)
     S.lastTickAt = now
     syncSim(now)
     S.sim.step(dt)
@@ -491,8 +475,9 @@ export function register(on: On) {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     S.home = (await $.env.get('HOME')) ?? ''
-    S.dir = S.home ? `${S.home}/.claude/pixel-agents/sessions` : ''
+    S.dir = S.home ? `${S.home}/${SESSIONS_PARTS.join('/')}` : ''
     S.account = accountOf(S.home)
+    S.sharedFolder = S.account ? sharedFolder(S.account) : ''
     S.sharedDir = S.account ? sharedDir(S.account) : ''
     const term = await $.env.get('TERM_PROGRAM')
     const kitty = await $.env.get('KITTY_WINDOW_ID')
