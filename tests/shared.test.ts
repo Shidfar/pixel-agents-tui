@@ -1,9 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 import { MAX_FOREIGN_BYTES, MAX_FOREIGN_SESSIONS, accountOf, asForeign, forShare, foreignAccount, fromShared, pickForeign, sharedDir, sharedFolder } from '../src/engine/shared'
 import { parseSnapshot } from '../src/engine/snapshots'
-import type { Agent, Snapshot } from '../src/engine/types'
+import type { Snapshot } from '../src/engine/types'
+import { agent } from './fixtures'
 
-const agent = (over: Partial<Agent> = {}): Agent => ({ id: 'main', kind: 'main', label: 'repo', activity: 'idle', since: 0, turnActive: false, inFlight: {}, ...over })
 const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   v: 1, sessionId: 's1', name: 'api', cwd: '/Users/jane.doe/code/api', startedAt: 0, updatedAt: 1000,
   context: { percent: 12 }, agents: [agent(), agent({ id: 'a1', kind: 'sub', label: 'explorer', parent: 'main' })], effects: [], nextEffectId: 1,
