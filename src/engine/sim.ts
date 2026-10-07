@@ -8,6 +8,7 @@ import type {
 } from './types'
 import { aggregateStats, alertsFor, isStale } from './snapshots'
 import { createRng, hashString } from './rng'
+import { toolClass } from './truth'
 import { findPath, isWalkable, nextFreeSeat, posKey, tileCenter } from './world'
 
 export type SimInput = {
@@ -83,10 +84,7 @@ const EFFECT_MAX_AGE_MS = 10_000
 
 const AROUND: readonly TilePos[] = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]
 
-// Mirrors toolClass in truth.ts, which this module may not import.
-const READING_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'ToolSearch'])
-const WEB_TOOLS = new Set(['WebFetch', 'WebSearch'])
-const RUNNING_TOOLS = new Set(['Bash', 'BashOutput', 'KillShell'])
+const WEB_TOOLS = new Set(['WebFetch', 'WebSearch'])   // truth.ts files these under reading; the beam is its own
 const BEAM_COLOR = { reading: 0x00ccff, web: 0xffcc00, running: 0xff8800 } as const
 
 const EFFECT_BUBBLE: Partial<Record<EffectKind, { readonly text: string; readonly tone: Tone; readonly sec: number }>> = {
@@ -123,8 +121,11 @@ const dirOf = (dx: number, dy: number): Dir =>
 const weatherOf = (percent: number | null): Weather =>
   percent === null || percent < 25 ? 'clear' : percent < 50 ? 'clouds' : percent < 75 ? 'rain' : percent < 90 ? 'storm' : 'lightning'
 
-const beamKind = (tool: string): 'reading' | 'web' | 'running' | null =>
-  WEB_TOOLS.has(tool) ? 'web' : READING_TOOLS.has(tool) ? 'reading' : RUNNING_TOOLS.has(tool) ? 'running' : null
+const beamKind = (tool: string): 'reading' | 'web' | 'running' | null => {
+  if (WEB_TOOLS.has(tool)) return 'web'
+  const cls = toolClass(tool)
+  return cls === 'reading' || cls === 'running' ? cls : null
+}
 
 // Fades toward black like the Go renderer did; ParticleView has no alpha.
 const dim = (rgb: number, f: number): number => {
