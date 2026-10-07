@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { createSim, type SimInput } from '../src/engine/sim'
-import { defaultWorld, isWalkable, tileCenter } from '../src/engine/world'
+import { defaultWorld, isWalkable, tileCenter, where } from '../src/engine/world'
 import type { Agent, Snapshot } from '../src/engine/types'
 
 const world = defaultWorld()
@@ -499,7 +499,7 @@ test('focus goes to a waiting agent, else the busy self, else any busy agent, el
 })
 
 test('the cat only rests on walkable tiles, and now and then naps', async () => {
-  const centers = new Set(world.tiles.flatMap((r, row) => r.flatMap((t, col) => (isWalkable(t) ? [`${tileCenter({ col, row }).x},${tileCenter({ col, row }).y}`] : []))))
+  const centers = new Set(where(world.tiles, isWalkable).map(p => `${tileCenter(p).x},${tileCenter(p).y}`))
   const rests = Array.from({ length: 6 }, (_, i) => {
     const sim = createSim(world, i + 1)
     sim.sync(input([snap([agent({})])]))

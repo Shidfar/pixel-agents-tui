@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { defaultWorld, findPath, isWalkable, nextFreeSeat, posKey, tileCenter, wallMask } from '../src/engine/world'
+import { defaultWorld, findPath, isWalkable, posKey, tileCenter, wallMask } from '../src/engine/world'
 
 test('default office is 22x13 with a walkable door on the bottom wall', async () => {
   const w = defaultWorld()
@@ -27,13 +27,6 @@ test('seats fill compactly: top-row work desks first, kitchen last; the playroom
   expect([w.tiles[6]![16], w.tiles[6]![17], w.tv]).toEqual(['tv', 'gameConsole', { col: 16, row: 6 }])
   expect(w.seats[0]!.monitor).toEqual({ col: 4, row: 2 })
   expect(w.tiles[2]![4]).toBe('computer')
-})
-
-test('nextFreeSeat skips taken seats and returns null when the office is full', async () => {
-  const w = defaultWorld()
-  expect(nextFreeSeat(w, new Set())!.id).toBe('w1')
-  expect(nextFreeSeat(w, new Set(['w1']))!.id).toBe('w2')
-  expect(nextFreeSeat(w, new Set(w.seats.map(s => s.id)))).toBe(null)
 })
 
 test('findPath is 4-connected BFS: excludes start, includes end, routes around blocked tiles', async () => {

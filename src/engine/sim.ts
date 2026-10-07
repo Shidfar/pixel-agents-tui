@@ -9,7 +9,7 @@ import type {
 import { aggregateStats, alertsFor, isStale } from './snapshots'
 import { createRng, hashString } from './rng'
 import { toolClass } from './truth'
-import { findPath, isWalkable, nextFreeSeat, posKey, tileCenter } from './world'
+import { DIRS, findPath, isWalkable, open, posKey, tileAt, tileCenter, where } from './world'
 
 export type SimInput = {
   readonly snapshots: readonly Snapshot[]     // every session the viewer knows, including its own and stale/ended ones
@@ -82,8 +82,6 @@ const FOLLOW_SEC = 10
 const NAP_CHANCE = 0.3
 const EFFECT_MAX_AGE_MS = 10_000
 
-const AROUND: readonly TilePos[] = [{ col: 0, row: -1 }, { col: 0, row: 1 }, { col: -1, row: 0 }, { col: 1, row: 0 }]
-
 const WEB_TOOLS = new Set(['WebFetch', 'WebSearch'])   // truth.ts files these under reading; the beam is its own
 const BEAM_COLOR = { reading: 0x00ccff, web: 0xffcc00, running: 0xff8800 } as const
 
@@ -155,7 +153,7 @@ export function createSim(world: World, seed: number): Sim {
   const doorPx = tileCenter(world.door)
   const DOOR: Target = { col: world.door.col, row: world.door.row, kind: 'door' }
   const seatById = new Map<string, Seat>([...world.seats, ...world.couches].map(s => [s.id, s] as const))
-  const walkable: TilePos[] = world.tiles.flatMap((r, row) => r.flatMap((t, col) => (isWalkable(t) ? [{ col, row }] : [])))
+  const walkable = where(world.tiles, isWalkable)
   const mid = (world.cols * TILE) / 2
   const windowPx = world.windows.map(p => tileCenter(p))
   const topWindow = [...windowPx].sort((a, b) => Math.abs(a.x - mid) - Math.abs(b.x - mid))[0] ?? { x: mid, y: 4 }
@@ -341,7 +339,7 @@ export function createSim(world: World, seed: number): Sim {
   // A seat when one is free, otherwise a lounge spot of its own: nobody is dropped.
   const claimSeat = (c: Char): void => {
     if (c.seatId !== null) return
-    const seat = nextFreeSeat(world, new Set(st.seats.keys()))
+    const seat = world.seats.find(s => !st.seats.has(s.id))
     if (seat) {
       st.seats.set(seat.id, c.key)
       c.seatId = seat.id
@@ -416,8 +414,7 @@ export function createSim(world: World, seed: number): Sim {
   // ── finished agents ──────────────────────────────────────────────────────────
   const visitTile = (parent: Char): TilePos => {
     const blocked = unavailable()
-    const next = AROUND.map(d => ({ col: parent.col + d.col, row: parent.row + d.row }))
-      .find(p => { const t = world.tiles[p.row]?.[p.col]; return t !== undefined && isWalkable(t) && !blocked.has(posKey(p)) })
+    const next = DIRS.map(d => ({ col: parent.col + d.col, row: parent.row + d.row })).find(p => open(world.tiles, p, blocked))
     return next ?? { col: parent.col, row: parent.row }
   }
 
@@ -657,7 +654,7 @@ export function createSim(world: World, seed: number): Sim {
 
   const pickCatGoal = (nap: boolean): TilePos => {
     const blocked = unavailable()
-    const chairs = world.seats.filter(s => world.tiles[s.row]?.[s.col] === 'chair' && !st.seats.has(s.id))
+    const chairs = world.seats.filter(s => tileAt(world, s) === 'chair' && !st.seats.has(s.id))
     const pool: readonly TilePos[] = nap ? [...world.lounge, ...chairs] : walkable
     const free = pool.filter(p => !blocked.has(posKey(p)) && !(p.col === cat.col && p.row === cat.row))
     const p = free.length > 0 ? rng.pick(free) : cat

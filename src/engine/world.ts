@@ -154,7 +154,3 @@ export function wallMask(w: World, col: number, row: number): number {
 export function tileCenter(p: TilePos): { readonly x: number; readonly y: number } {
   return { x: p.col * TILE + TILE / 2, y: p.row * TILE + TILE / 2 }
 }
-
-export function nextFreeSeat(w: World, takenSeatIds: ReadonlySet<string>): Seat | null {
-  return w.seats.find(s => !takenSeatIds.has(s.id)) ?? null
-}
